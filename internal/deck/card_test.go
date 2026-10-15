@@ -91,8 +91,8 @@ func TestMovingToAnotherCardLeavesTheDeckInPlace(t *testing.T) {
 	}
 }
 
-func TestLongCardAboveNudgesTheNextUnderThePointer(t *testing.T) {
-	d := newDeck(Right, 5)
+func TestTabsSlidingUnderAStillPointerWait(t *testing.T) {
+	d := newDeck(Right, 9)
 	d.SetCardMeasure(func(it Item, _ float64) float64 {
 		if it.ID == "a" {
 			return 350
@@ -101,12 +101,28 @@ func TestLongCardAboveNudgesTheNextUnderThePointer(t *testing.T) {
 	})
 	d.SetHeld(true)
 	run(d, time.Second)
+	top := d.Frame().Tabs[0].Rect.Y
 	rest(d, 0, time.Second)
+	// Down to tab 3: as the long card above closes, tab 3 slides up and
+	// another tab ends up under the pointer.
 	x, y := center(d.Frame().Tabs[3].Rect)
 	d.Pointer(x, y, true)
 	run(d, 2*time.Second)
-	if card := d.Frame().Tabs[3].Rect; d.Peeked() != "d" || !card.Contains(float64(x), float64(y)) {
-		t.Errorf("peeked %q with the pointer at %d,%d and the card at %+v", d.Peeked(), x, y, card)
+	if d.Peeked() != "d" {
+		t.Fatalf("peeked %q, want d", d.Peeked())
+	}
+	if f := d.Frame(); f.Tabs[0].Rect.Y != top || d.offset != 0 {
+		t.Errorf("the deck moved: first tab at %v, was %v, offset %v", f.Tabs[0].Rect.Y, top, d.offset)
+	}
+	under := d.HitTest(x, y)
+	if under.Kind != HitTab || under.Index == 3 {
+		t.Fatalf("expected another tab under the pointer, got %+v", under)
+	}
+	// Moving the pointer is what opens that one.
+	d.Pointer(x, y+6, true)
+	run(d, time.Second)
+	if d.Peeked() != d.Items()[d.HitTest(x, y+6).Index].ID {
+		t.Errorf("moving onto tab %d did not open it; peeked %q", d.HitTest(x, y+6).Index, d.Peeked())
 	}
 }
 

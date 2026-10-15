@@ -74,6 +74,9 @@ const (
 	// sweeping past is faster than that and opens nothing. A hand that never
 	// quite keeps still still opens the card after peekDelay.
 	settleSpeed = 120.0
+	// switchSlack is how far the pointer must move after a card opened
+	// before another can open.
+	switchSlack = 4.0
 	settleTime  = 0.025
 	peekDelay   = 0.15
 )
@@ -212,9 +215,16 @@ type Deck struct {
 	// peekAway is how long the pointer has been away from an open card.
 	peekAway float64
 	// offset shifts the expanded tabs vertically, in pixels, springing
-	// toward offsetTarget: zero, unless the open card needs nudging to stay
-	// on screen or to stay under the pointer.
+	// toward offsetTarget: zero, unless the open card would reach off
+	// screen.
 	offset, offsetV, offsetTarget float64
+	// switchX and switchY are where the pointer was when the open card last
+	// changed, and moved whether it has moved away since. Opening one card
+	// and closing another slides tabs under a pointer that has not moved;
+	// the tab that lands there is not one the user chose, so it waits for
+	// the pointer to move.
+	switchX, switchY float64
+	moved            bool
 	// safeTop and safeBottom bound where a card may be drawn, in window
 	// pixels; safeBottom is zero when unset.
 	safeTop, safeBottom float64
@@ -222,7 +232,7 @@ type Deck struct {
 
 // New returns a collapsed, empty deck on the given edge.
 func New(edge Edge) *Deck {
-	return &Deck{edge: edge, scale: 1, lift: make([]float64, 1)}
+	return &Deck{edge: edge, scale: 1, lift: make([]float64, 1), moved: true}
 }
 
 // SetItems replaces the notes shown in the deck.
@@ -482,6 +492,7 @@ func (d *Deck) updatePeek(sec float64, hit Hit) bool {
 	before := d.peekID
 	if !d.open || d.measure == nil {
 		d.peekID, d.dwellID, d.skipID = "", "", ""
+		d.moved = true
 		return before != ""
 	}
 	over := ""
@@ -503,13 +514,23 @@ func (d *Deck) updatePeek(sec float64, hit Hit) bool {
 		// While cards are still opening or closing, tabs slide under a
 		// pointer that has not moved; wait until they stop before taking
 		// the tab underneath as the one wanted.
-		if (d.dwell >= peekDelay || d.still >= settleTime) && !d.cardsMoving() {
+		if !d.moved && math.Hypot(d.pointerX-d.switchX, d.pointerY-d.switchY) > switchSlack*d.scale {
+			d.moved = true
+		}
+		if (d.dwell >= peekDelay || d.still >= settleTime) && d.moved && !d.cardsMoving() {
 			d.peekID, d.dwellID = over, ""
 			d.offsetTarget = d.targetOffset(d.index(over))
+			d.switchX, d.switchY, d.moved = d.pointerX, d.pointerY, d.peekID == ""
 		}
 	default:
 		d.dwellID = ""
-		if d.peekID == "" || hit.Kind != HitNone || d.nearContent() {
+		// A card stays open while the pointer is on the deck, and while it
+		// has not moved since the card opened: the tabs may have slid out
+		// from under it.
+		if !d.moved && math.Hypot(d.pointerX-d.switchX, d.pointerY-d.switchY) > switchSlack*d.scale {
+			d.moved = true
+		}
+		if d.peekID == "" || hit.Kind != HitNone || d.nearContent() || !d.moved {
 			d.peekAway = 0
 			break
 		}
@@ -556,20 +577,13 @@ func (d *Deck) cardsMoving() bool {
 }
 
 // targetOffset is where the deck should settle once tab i's card has fully
-// opened and every other card has closed. The deck stays where it is unless
-// that would leave the pointer outside the card, or the card off screen,
-// and then moves only as far as needed.
+// opened and every other card has closed: where it is, unless the card
+// would reach off screen, and then only as far as keeps it on.
 func (d *Deck) targetOffset(i int) float64 {
 	s := d.scale
 	top := d.slotY(i, true)
 	bottom := top + d.cardHeight(i)
 	offset := 0.0
-	if d.pointerIn {
-		pad := tabHeight * s / 2
-		if d.pointerY > bottom-pad {
-			offset = d.pointerY - (bottom - pad)
-		}
-	}
 	_, h := d.Size()
 	lo, hi := d.safeTop, d.safeBottom
 	if hi <= lo {
