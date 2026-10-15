@@ -124,3 +124,53 @@ func parseKey(name string) (uint32, bool) {
 	}
 	return 0, false
 }
+
+// keyNames are the canonical spellings Format uses for named keys.
+var keyNames = map[uint32]string{
+	0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x1B: "Esc", 0x20: "Space",
+	0x21: "PageUp", 0x22: "PageDown", 0x23: "End", 0x24: "Home",
+	0x25: "Left", 0x26: "Up", 0x27: "Right", 0x28: "Down",
+	0x2D: "Insert", 0x2E: "Delete",
+	0xBA: ";", 0xBB: "=", 0xBC: ",", 0xBD: "-", 0xBE: ".", 0xBF: "/",
+	0xC0: "`", 0xDB: "[", 0xDC: `\`, 0xDD: "]", 0xDE: "'",
+}
+
+// Format writes a hotkey the way Parse reads it, e.g. "Ctrl+Alt+N", with the
+// modifiers in the order Windows itself uses. The zero Hotkey formats as "".
+// Keys Parse does not know format as "".
+func Format(h Hotkey) string {
+	key := keyName(h.Key)
+	if key == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, m := range []struct {
+		flag uint32
+		name string
+	}{{ModCtrl, "Ctrl"}, {ModAlt, "Alt"}, {ModShift, "Shift"}, {ModWin, "Win"}} {
+		if h.Mods&m.flag != 0 {
+			b.WriteString(m.name + "+")
+		}
+	}
+	return b.String() + key
+}
+
+func keyName(vk uint32) string {
+	switch {
+	case vk >= 'A' && vk <= 'Z', vk >= '0' && vk <= '9':
+		return string(rune(vk))
+	case vk >= 0x70 && vk <= 0x87:
+		return "F" + strconv.Itoa(int(vk-0x70+1))
+	}
+	return keyNames[vk]
+}
+
+// IsModifierKey reports whether a virtual key is itself a modifier (Shift,
+// Ctrl, Alt or Windows), which cannot be the key of a hotkey.
+func IsModifierKey(vk uint32) bool {
+	switch vk {
+	case 0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5:
+		return true
+	}
+	return false
+}

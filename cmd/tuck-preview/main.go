@@ -19,10 +19,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/MatthewPocock/tuck/internal/config"
 	"github.com/MatthewPocock/tuck/internal/deck"
 	"github.com/MatthewPocock/tuck/internal/fonttext"
 	"github.com/MatthewPocock/tuck/internal/note"
 	"github.com/MatthewPocock/tuck/internal/render"
+	"github.com/MatthewPocock/tuck/internal/settings"
 )
 
 var sampleNotes = []deck.Item{
@@ -82,6 +84,7 @@ func run(dir string, scale float64) error {
 		"deck-right.png": deckStrip(deck.Right, scale, text),
 		"deck-left.png":  deckStrip(deck.Left, scale, text),
 		"header.png":     headers(scale),
+		"settings.png":   settingsWindow(scale),
 		"icon.png":       icons(),
 	}
 	for name, img := range images {
@@ -145,6 +148,33 @@ func deckStrip(edge deck.Edge, scale float64, text render.TextDrawer) image.Imag
 		}
 	}
 	return sheet
+}
+
+// settingsWindow renders the settings window in the light and dark themes,
+// side by side, with a shortcut being recorded in the dark one.
+func settingsWindow(scale float64) image.Image {
+	state := settings.State{
+		Config:    config.Default(),
+		Autostart: true,
+		NotesDir:  `C:\Users\Ana\OneDrive\Notes`,
+		Version:   "v1.0.0",
+		Hover:     settings.ChangeFolder,
+	}
+	text := fonttext.New()
+	l := settings.NewLayout(scale, state)
+	gap := int(16 * scale)
+	out := image.NewRGBA(image.Rect(0, 0, 2*l.Width+gap, l.Height))
+	for i, dark := range []bool{false, true} {
+		s := state
+		if dark {
+			s.Capturing, s.Hover = settings.ToggleDeckKey, settings.Theme
+			s.HoverSegment = 2
+		}
+		c := render.NewCanvas(1, 1)
+		render.DrawSettings(c, settings.NewLayout(scale, s), s, dark, text)
+		draw.Draw(out, c.Img.Bounds().Add(image.Pt(i*(l.Width+gap), 0)), c.Img, image.Point{}, draw.Src)
+	}
+	return out
 }
 
 // headers renders the editor header for every colour in both themes.

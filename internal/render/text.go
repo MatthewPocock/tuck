@@ -15,10 +15,25 @@ type TextStyle struct {
 	Color color.NRGBA
 	// Opacity fades the text, from 0 (invisible) to 1.
 	Opacity float64
+	// Align places the text horizontally within its rectangle.
+	Align Align
+	// Path shortens text that does not fit in the middle rather than at the
+	// end, keeping the last folder of a path visible.
+	Path bool
 }
 
-// TextDrawer draws a single line of text. Implementations left-align the text
-// within r, centre it vertically, and truncate it with an ellipsis if it does
+// Align is the horizontal alignment of text.
+type Align int
+
+// The supported alignments.
+const (
+	AlignLeft Align = iota
+	AlignCenter
+	AlignRight
+)
+
+// TextDrawer draws a single line of text. Implementations align the text
+// within r as the style asks, centre it vertically, and truncate it with an ellipsis if it does
 // not fit.
 //
 // The Windows shell provides an implementation backed by the system text

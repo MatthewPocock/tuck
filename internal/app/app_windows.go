@@ -27,6 +27,7 @@ const (
 	controllerClass = "TuckController"
 	deckClass       = "TuckDeck"
 	editorClass     = "TuckEditor"
+	settingsClass   = "TuckSettings"
 
 	// msgTray carries notification area icon events.
 	msgTray = win32.WM_APP + 1
@@ -82,9 +83,11 @@ type App struct {
 	controller win32.HWND
 	deck       *deckWindow
 	editor     *editorWindow
-	tray       tray
-	text       *gdiText
-	watch      *folderWatch
+	// settings is created when first opened.
+	settings *settingsWindow
+	tray     tray
+	text     *gdiText
+	watch    *folderWatch
 
 	// taskbarCreated is the message Explorer broadcasts when it restarts.
 	taskbarCreated uint32
@@ -193,6 +196,7 @@ func (a *App) createWindows() error {
 		controllerClass: win32.IDC_ARROW,
 		deckClass:       win32.IDC_HAND,
 		editorClass:     win32.IDC_ARROW,
+		settingsClass:   win32.IDC_ARROW,
 	} {
 		if err := registerClass(a.inst, class, cursor); err != nil {
 			return err
@@ -266,14 +270,14 @@ func (a *App) shutdown() {
 	a.editor.flush()
 	a.tray.remove()
 	a.watch.close()
-	win32.UnregisterHotKey(a.controller, hotkeyNewNote)
-	win32.UnregisterHotKey(a.controller, hotkeyToggleDeck)
+	a.unregisterHotkeys()
 	a.text.close()
 	log.Printf("%s stopped", appName)
 }
 
-// registerHotkeys (re)registers the global shortcuts from the config.
-func (a *App) registerHotkeys() {
+// registerHotkeys (re)registers the global shortcuts from the config. It
+// returns a message for each shortcut that could not be registered.
+func (a *App) registerHotkeys() (failures []string) {
 	bindings := []struct {
 		id       int32
 		name     string
@@ -296,8 +300,16 @@ func (a *App) registerHotkeys() {
 		// not fatal: everything stays reachable with the mouse.
 		if err := win32.RegisterHotKey(a.controller, b.id, hk.Mods, hk.Key); err != nil {
 			log.Printf("hotkey %s (%s): %v", b.name, b.shortcut, err)
+			failures = append(failures, hotkey.Format(hk)+" is already taken by another app.")
 		}
 	}
+	return failures
+}
+
+// unregisterHotkeys releases the global shortcuts.
+func (a *App) unregisterHotkeys() {
+	win32.UnregisterHotKey(a.controller, hotkeyNewNote)
+	win32.UnregisterHotKey(a.controller, hotkeyToggleDeck)
 }
 
 // wndProc handles the controller window's messages.
@@ -354,6 +366,7 @@ func (a *App) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 		if a.editor != nil {
 			a.editor.applyTheme()
 		}
+		a.refreshSettings()
 		return 0
 
 	case win32.WM_DESTROY:
@@ -696,6 +709,7 @@ func (a *App) setEdge(e config.Edge) {
 	a.editor.hide()
 	a.deck.refresh()
 	a.deck.peek()
+	a.refreshSettings()
 }
 
 func (a *App) setPosition(p float64) {
@@ -704,12 +718,14 @@ func (a *App) setPosition(p float64) {
 	a.editor.hide()
 	a.deck.refresh()
 	a.deck.peek()
+	a.refreshSettings()
 }
 
 func (a *App) setTheme(t config.Theme) {
 	a.cfg.Theme = t
 	a.saveConfig()
 	a.editor.applyTheme()
+	a.refreshSettings()
 }
 
 // popup shows a menu while keeping the deck and the editor open.
@@ -783,34 +799,7 @@ func (a *App) showMainMenu(at win32.POINT) {
 	}
 	m.item("Open notes folder", func() { win32.ShellOpen(a.store.Dir()) })
 	m.separator()
-
-	edge := m.submenu("Dock to")
-	edge.check("Left edge", a.cfg.Edge == config.EdgeLeft, func() { a.setEdge(config.EdgeLeft) })
-	edge.check("Right edge", a.cfg.Edge == config.EdgeRight, func() { a.setEdge(config.EdgeRight) })
-
-	position := m.submenu("Position")
-	for _, p := range []struct {
-		label string
-		value float64
-	}{{"Top", 0.12}, {"Middle", 0.5}, {"Bottom", 0.88}} {
-		position.check(p.label, a.cfg.Position == p.value, func() { a.setPosition(p.value) })
-	}
-
-	theme := m.submenu("Theme")
-	for _, t := range []struct {
-		label string
-		value config.Theme
-	}{{"Match Windows", config.ThemeSystem}, {"Light", config.ThemeLight}, {"Dark", config.ThemeDark}} {
-		theme.check(t.label, a.cfg.Theme == t.value, func() { a.setTheme(t.value) })
-	}
-
-	autostart := autostartEnabled()
-	m.check("Start with Windows", autostart, func() {
-		if err := setAutostart(!autostart); err != nil {
-			log.Printf("autostart: %v", err)
-		}
-	})
-	m.item("Edit settings file", func() { win32.ShellOpen(a.paths.config) })
+	m.item("Settings…", a.showSettings)
 	m.separator()
 	m.disabled(appName + " " + a.version)
 	m.item("Quit", a.quit)

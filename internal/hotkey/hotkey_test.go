@@ -43,3 +43,28 @@ func TestIsZero(t *testing.T) {
 		t.Error("non-zero Hotkey reported as unset")
 	}
 }
+
+func TestFormatRoundTrips(t *testing.T) {
+	for _, s := range []string{"Ctrl+Alt+N", "Ctrl+Shift+F12", "Alt+Win+Space", "Ctrl+Alt+.", "Shift+Win+PageDown", `Ctrl+\`, "Ctrl+7"} {
+		h, err := Parse(s)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", s, err)
+		}
+		if got := Format(h); got != s {
+			t.Errorf("Format(Parse(%q)) = %q", s, got)
+		}
+	}
+}
+
+func TestFormatOrdersModifiersAndHandlesUnknownKeys(t *testing.T) {
+	h, _ := Parse("win+shift+alt+ctrl+a")
+	if got, want := Format(h), "Ctrl+Alt+Shift+Win+A"; got != want {
+		t.Errorf("Format = %q, want %q", got, want)
+	}
+	if got := Format(Hotkey{}); got != "" {
+		t.Errorf("Format(zero) = %q, want empty", got)
+	}
+	if got := Format(Hotkey{Mods: ModCtrl, Key: 0xFF}); got != "" {
+		t.Errorf("Format of an unknown key = %q, want empty", got)
+	}
+}

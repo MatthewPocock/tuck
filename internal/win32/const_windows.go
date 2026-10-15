@@ -24,6 +24,9 @@ const (
 	WM_NCHITTEST       = 0x0084
 	WM_NCACTIVATE      = 0x0086
 	WM_KEYDOWN         = 0x0100
+	WM_CHAR            = 0x0102
+	WM_SYSCHAR         = 0x0106
+	WM_SETICON         = 0x0080
 	WM_SYSKEYDOWN      = 0x0104
 	WM_COMMAND         = 0x0111
 	WM_TIMER           = 0x0113
@@ -56,6 +59,9 @@ const (
 	IDC_ARROW          = 32512
 	IDC_HAND           = 32649
 	SM_CXSMICON        = 49
+	SM_CXICON          = 11
+	ICON_SMALL         = 0
+	ICON_BIG           = 1
 	CS_HREDRAW         = 0x0002
 	CS_VREDRAW         = 0x0001
 	TME_LEAVE          = 0x0002
@@ -72,8 +78,11 @@ const (
 	WS_CLIPCHILDREN = 0x02000000
 	WS_VSCROLL      = 0x00200000
 	WS_THICKFRAME   = 0x00040000
+	WS_SYSMENU      = 0x00080000
+	WS_MINIMIZEBOX  = 0x00020000
 
 	WS_EX_TOPMOST    = 0x00000008
+	WS_EX_APPWINDOW  = 0x00040000
 	WS_EX_TOOLWINDOW = 0x00000080
 	WS_EX_LAYERED    = 0x00080000
 	WS_EX_NOACTIVATE = 0x08000000
@@ -122,6 +131,9 @@ const (
 	VK_CONTROL    = 0x11
 	VK_MENU       = 0x12
 	VK_ESCAPE     = 0x1B
+	VK_DELETE     = 0x2E
+	VK_LWIN       = 0x5B
+	VK_RWIN       = 0x5C
 	VK_PRIOR      = 0x21
 	VK_NEXT       = 0x22
 	VK_OEM_PERIOD = 0xBE
@@ -147,11 +159,14 @@ const (
 	FW_NORMAL           = 400
 	FW_SEMIBOLD         = 600
 
-	DT_LEFT         = 0x0000
-	DT_VCENTER      = 0x0004
-	DT_SINGLELINE   = 0x0020
-	DT_NOPREFIX     = 0x0800
-	DT_END_ELLIPSIS = 0x8000
+	DT_LEFT          = 0x0000
+	DT_CENTER        = 0x0001
+	DT_RIGHT         = 0x0002
+	DT_VCENTER       = 0x0004
+	DT_SINGLELINE    = 0x0020
+	DT_NOPREFIX      = 0x0800
+	DT_END_ELLIPSIS  = 0x8000
+	DT_PATH_ELLIPSIS = 0x00004000
 )
 
 // Monitors.

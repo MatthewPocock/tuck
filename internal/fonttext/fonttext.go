@@ -93,11 +93,18 @@ func (t *FontText) DrawText(dst *image.RGBA, r image.Rectangle, text string, sty
 	if !ok {
 		return
 	}
+	x := fixed.I(r.Min.X)
+	switch slack := fixed.I(r.Dx()) - font.MeasureString(face, text); style.Align {
+	case render.AlignCenter:
+		x += slack / 2
+	case render.AlignRight:
+		x += slack
+	}
 	d := font.Drawer{
 		Dst:  clipped,
 		Src:  image.NewUniform(render.WithAlpha(style.Color, style.Opacity)),
 		Face: face,
-		Dot:  fixed.Point26_6{X: fixed.I(r.Min.X), Y: baseline},
+		Dot:  fixed.Point26_6{X: x, Y: baseline},
 	}
 	d.DrawString(text)
 }

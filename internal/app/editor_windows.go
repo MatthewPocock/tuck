@@ -252,6 +252,13 @@ func (e *editorWindow) setScale(scale float64) {
 	e.loading = false
 }
 
+// applyFont recreates the font after the font size setting changed.
+func (e *editorWindow) applyFont() {
+	scale := e.scale
+	e.scale = 0 // force setScale to rebuild the font
+	e.setScale(scale)
+}
+
 // applyTheme recolours the window for the current note and theme.
 func (e *editorWindow) applyTheme() {
 	if e.note == nil {
