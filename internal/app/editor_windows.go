@@ -49,6 +49,12 @@ type editorWindow struct {
 	// rich reports whether edit is a rich edit control. If that DLL is
 	// unavailable the editor falls back to a classic EDIT control.
 	rich bool
+	// doc is the rich edit control's text object model, used to keep
+	// restyling out of the undo history.
+	doc *win32.TextDocument
+	// editProc is the text control's own window procedure (see
+	// subclassEdit).
+	editProc uintptr
 
 	note   *note.Note
 	shown  bool
@@ -110,9 +116,14 @@ func (e *editorWindow) createEdit() error {
 	if _, err := windows.LoadLibrary("Msftedit.dll"); err == nil {
 		if h, err := win32.CreateWindowEx(0, "RICHEDIT50W", "", style, 0, 0, 0, 0, e.hwnd, 0, e.app.inst); err == nil {
 			e.edit, e.rich = h, true
-			win32.SendMessage(h, win32.EM_SETTEXTMODE, win32.TM_PLAINTEXT, 0)
+			// Rich text mode is only used to style the Markdown on screen
+			// (see restyle); the note itself stays plain text.
+			win32.SendMessage(h, win32.EM_SETTEXTMODE, win32.TM_RICHTEXT|win32.TM_MULTILEVELUNDO, 0)
 			win32.SendMessage(h, win32.EM_EXLIMITTEXT, 0, maxNoteChars)
-			win32.SendMessage(h, win32.EM_SETEVENTMASK, 0, win32.ENM_CHANGE)
+			win32.SendMessage(h, win32.EM_AUTOURLDETECT, win32.AURL_ENABLEURL, 0)
+			win32.SendMessage(h, win32.EM_SETEVENTMASK, 0, win32.ENM_CHANGE|win32.ENM_LINK)
+			e.doc = win32.RichEditDocument(h)
+			e.subclassEdit()
 			return nil
 		}
 	}
@@ -218,7 +229,7 @@ func (e *editorWindow) text() string {
 func (e *editorWindow) setText(body string) {
 	e.loading = true
 	win32.SetWindowText(e.edit, strings.ReplaceAll(body, "\n", "\r\n"))
-	e.applyTextColor()
+	e.restyle()
 	e.loading = false
 	e.dirty = false
 }
@@ -237,7 +248,7 @@ func (e *editorWindow) setScale(scale float64) {
 	e.font = win32.CreateFont(int32(math.Round(px)), win32.FW_NORMAL, win32.CLEARTYPE_QUALITY, uiFont)
 	e.loading = true
 	win32.SendMessage(e.edit, win32.WM_SETFONT, uintptr(e.font), 1)
-	e.applyTextColor()
+	e.restyle()
 	e.loading = false
 }
 
@@ -272,22 +283,11 @@ func (e *editorWindow) applyTheme() {
 		win32.SendMessage(e.edit, win32.EM_SETBKGNDCOLOR, 0, uintptr(colorRef(e.sw.Paper)))
 	}
 	e.loading = true
-	e.applyTextColor()
+	e.restyle()
 	e.loading = false
 
 	win32.InvalidateRect(e.hwnd, nil)
 	win32.InvalidateRect(e.edit, nil)
-}
-
-// applyTextColor sets the text colour of a rich edit control. A classic EDIT
-// control is coloured through WM_CTLCOLOREDIT instead.
-func (e *editorWindow) applyTextColor() {
-	if !e.rich {
-		return
-	}
-	format := win32.CHARFORMAT{Mask: win32.CFM_COLOR, TextColor: colorRef(e.sw.Text)}
-	format.Size = uint32(unsafe.Sizeof(format))
-	win32.SendMessage(e.edit, win32.EM_SETCHARFORMAT, win32.SCF_ALL, uintptr(unsafe.Pointer(&format)))
 }
 
 // colorRef converts an opaque colour to GDI's representation.
@@ -442,6 +442,11 @@ func (e *editorWindow) handleKey(vk uintptr) bool {
 		e.hide()
 		return true
 	}
+	if e.rich && (ctrl && !alt && !shift && vk == 'V' || shift && !ctrl && vk == win32.VK_INSERT) {
+		// Paste words, never formatting or pictures.
+		win32.SendMessage(e.edit, win32.EM_PASTESPECIAL, win32.CF_UNICODETEXT, 0)
+		return true
+	}
 	// AltGr is reported as Ctrl+Alt and types characters on many layouts.
 	if !ctrl || alt {
 		return false
@@ -473,10 +478,10 @@ func (e *editorWindow) handleKey(vk uintptr) bool {
 		if e.note != nil {
 			e.app.deleteNote(e.note.ID)
 		}
-	case 'E', 'L', 'R', 'J', '1', '2', '5':
-		// Rich edit paragraph-formatting shortcuts, which make no sense
-		// for plain text.
-		return e.rich
+	case 'E', 'L', 'R', 'J', '1', '2', '5', 'U', 'A', win32.VK_OEM_PLUS, win32.VK_OEM_4, win32.VK_OEM_6:
+		// Rich edit formatting shortcuts, which make no sense for plain
+		// text. Plain Ctrl+A still selects everything.
+		return e.rich && (vk != 'A' || shift)
 	default:
 		return false
 	}
@@ -581,6 +586,16 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 		if win32.HiWord(wp) == win32.EN_CHANGE && win32.HWND(lp) == e.edit && !e.loading {
 			e.dirty = true
 			win32.SetTimer(hwnd, saveTimer, saveDelay)
+			e.restyle()
+		}
+		return 0
+
+	case win32.WM_NOTIFY:
+		if hdr := win32.PointerFromLParam[win32.NMHDR](lp); hdr.From == e.edit && hdr.Code == win32.EN_LINK {
+			link := win32.PointerFromLParam[win32.ENLINK](lp)
+			if link.Msg == win32.WM_LBUTTONUP {
+				e.openLink(link.Range)
+			}
 		}
 		return 0
 
@@ -659,6 +674,7 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 		if e.border != 0 {
 			win32.DeleteObject(win32.HGDIOBJ(e.border))
 		}
+		e.doc.Release()
 		return 0
 	}
 	return win32.DefWindowProc(hwnd, msg, wp, lp)

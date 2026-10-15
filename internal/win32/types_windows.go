@@ -50,6 +50,22 @@ type MENUITEMINFO struct {
 	BitmapItem      HBITMAP
 }
 
+// NMHDR is the header of every WM_NOTIFY message.
+type NMHDR struct {
+	From HWND
+	ID   uintptr
+	Code uint32
+}
+
+// ENLINK accompanies the EN_LINK notification of a rich edit control.
+type ENLINK struct {
+	Header NMHDR
+	Msg    uint32
+	WParam uintptr
+	LParam uintptr
+	Range  CHARRANGE
+}
+
 // MARGINS is the Win32 MARGINS structure.
 type MARGINS struct {
 	Left, Right, Top, Bottom int32

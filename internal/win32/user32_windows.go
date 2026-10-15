@@ -43,6 +43,10 @@ var (
 	procMonitorFromPoint              = user32.NewProc("MonitorFromPoint")
 	procMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
 	procMoveWindow                    = user32.NewProc("MoveWindow")
+	procCallWindowProcW               = user32.NewProc("CallWindowProcW")
+	procSetWindowLongPtrW             = user32.NewProc("SetWindowLongPtrW")
+	procSetCursor                     = user32.NewProc("SetCursor")
+	procScreenToClient                = user32.NewProc("ScreenToClient")
 	procMsgWaitForMultipleObjectsEx   = user32.NewProc("MsgWaitForMultipleObjectsEx")
 	procPeekMessageW                  = user32.NewProc("PeekMessageW")
 	procPostMessageW                  = user32.NewProc("PostMessageW")
@@ -148,6 +152,32 @@ func IsWindowVisible(hwnd HWND) bool {
 func GetMessage(msg *MSG) bool {
 	r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(msg)), 0, 0, 0)
 	return int32(r) > 0
+}
+
+// Subclass replaces the window procedure of a window, typically a control,
+// with proc, which is a callback from NewWndProc. It returns the previous
+// procedure, which proc must pass unhandled messages to with CallWindowProc.
+func Subclass(hwnd HWND, proc uintptr) uintptr {
+	const gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC, -4
+	r, _, _ := procSetWindowLongPtrW.Call(uintptr(hwnd), gwlpWndProc, proc)
+	return r
+}
+
+// CallWindowProc passes a message to a window procedure returned by
+// Subclass.
+func CallWindowProc(proc uintptr, hwnd HWND, msg uint32, wp, lp uintptr) uintptr {
+	r, _, _ := procCallWindowProcW.Call(proc, uintptr(hwnd), uintptr(msg), wp, lp)
+	return r
+}
+
+func SetCursor(c HCURSOR) {
+	procSetCursor.Call(uintptr(c))
+}
+
+// ScreenToClient converts a point from screen to client coordinates.
+func ScreenToClient(hwnd HWND, pt POINT) POINT {
+	procScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
+	return pt
 }
 
 // PeekMessage removes the next message for the calling thread from its
