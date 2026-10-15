@@ -29,13 +29,19 @@ import (
 )
 
 var sampleNotes = []deck.Item{
-	{ID: "1", Title: "Groceries for the weekend", Color: note.Yellow},
-	{ID: "2", Title: "Standup: blocked on review", Color: note.Sky},
-	{ID: "3", Title: "Ideas for Ana's birthday", Color: note.Pink},
-	{ID: "4", Title: "Wi-Fi: guest network password is on the fridge", Color: note.Mint},
-	{ID: "5", Title: "Read later", Color: note.Lilac},
-	{ID: "6", Title: "", Color: note.Peach},
-	{ID: "7", Title: "Scratch", Color: note.Stone},
+	{ID: "1", Title: "Groceries for the weekend", Color: note.Yellow, Meta: "2 of 5 done · 3h ago",
+		Body: "Groceries for the weekend\n- [ ] oat milk\n- [ ] sourdough\n- [ ] something green\n- [x] coffee beans\n- [x] eggs\n\nRemember the **reusable bags**."},
+	{ID: "2", Title: "Standup: blocked on review", Color: note.Sky, Meta: "20 min ago",
+		Body: "Standup: blocked on review\nWaiting on Sam for the API review. Ask about the **budget** before Friday's planning, and check whether the release notes are ready."},
+	{ID: "3", Title: "Ideas for Ana's birthday", Color: note.Pink, Meta: "1 of 4 done · Yesterday",
+		Body: "Ideas for Ana's birthday\n- [ ] a milk frother?\n- [ ] concert tickets\n- [ ] card from everyone\n- [x] book the restaurant"},
+	{ID: "4", Title: "Wi-Fi: guest network password is on the fridge", Color: note.Mint, Meta: "Monday",
+		Body: "Wi-Fi: guest network password is on the fridge"},
+	{ID: "5", Title: "Read later", Color: note.Lilac, Meta: "Last week",
+		Body: "Read later\n- The Go blog on iterators\n- *The Pragmatic Programmer*, chapter 3\n  - the bit on tracer bullets"},
+	{ID: "6", Title: "", Color: note.Peach, Meta: "Just now"},
+	{ID: "7", Title: "Scratch", Color: note.Stone, Meta: "2 Oct",
+		Body: "Scratch\n## Ideas\n> Make it work, make it right, make it fast."},
 }
 
 func main() {
@@ -84,6 +90,7 @@ func run(dir string, scale float64) error {
 	images := map[string]image.Image{
 		"deck-right.png": deckStrip(deck.Right, scale, text),
 		"deck-left.png":  deckStrip(deck.Left, scale, text),
+		"cards.png":      cardStrip(scale, text),
 		"header.png":     headers(scale, text),
 		"settings.png":   settingsWindow(scale),
 		"search.png":     searchWindow(scale, text),
@@ -147,6 +154,74 @@ func deckStrip(edge deck.Edge, scale float64, text render.TextDrawer) image.Imag
 		for row := range 2 {
 			at := image.Pt(i*w, row*h)
 			draw.Draw(sheet, f.Bounds().Add(at), f, image.Point{}, draw.Over)
+		}
+	}
+	return sheet
+}
+
+// cardStrip renders the deck with a tab grown into a preview card: the first
+// note, a note further down half-way through growing and fully grown, and a
+// note with a single line, in the light and dark themes.
+func cardStrip(scale float64, text render.TextDrawer) image.Image {
+	type moment struct {
+		tab  int
+		grow time.Duration // how long since the card started growing
+	}
+	moments := []moment{{0, time.Second}, {2, 90 * time.Millisecond}, {2, time.Second}, {3, time.Second}}
+	var frames [2][]*image.RGBA
+	for row, dark := range []bool{false, true} {
+		for _, m := range moments {
+			d := deck.New(deck.Right)
+			d.SetScale(scale)
+			d.SetDark(dark)
+			d.SetCardMeasure(func(it deck.Item, s float64) float64 { return render.CardHeight(it, s, text) })
+			d.SetItems(sampleNotes)
+			d.SetHeld(true)
+			advance(d, time.Second)
+			px, py := midpoint(d.Frame().Tabs[m.tab].Rect)
+			d.Pointer(px, py, true)
+			// The card starts growing once the pointer has rested for the
+			// peek delay.
+			for d.Peeked() == "" {
+				d.Advance(8 * time.Millisecond)
+			}
+			advance(d, m.grow)
+			c := render.NewCanvas(1, 1)
+			render.DrawDeck(c, d.Frame(), text)
+			frames[row] = append(frames[row], c.Img)
+		}
+	}
+	// The window leaves room above and below the deck for cards to grow
+	// into; crop the frames to the rows anything was drawn in.
+	top, bottom := frames[0][0].Bounds().Dy(), 0
+	for _, row := range frames {
+		for _, f := range row {
+			b := f.Bounds()
+			for y := b.Min.Y; y < b.Max.Y; y++ {
+				for x := b.Min.X; x < b.Max.X; x++ {
+					if f.RGBAAt(x, y).A > 8 {
+						top, bottom = min(top, y), max(bottom, y+1)
+						break
+					}
+				}
+			}
+		}
+	}
+	pad := int(12 * scale)
+	crop := image.Rect(0, max(0, top-pad), frames[0][0].Bounds().Dx(), min(frames[0][0].Bounds().Dy(), bottom+pad))
+	for _, row := range frames {
+		for i, f := range row {
+			row[i] = f.SubImage(crop).(*image.RGBA)
+		}
+	}
+	w, h := crop.Dx(), crop.Dy()
+	sheet := image.NewRGBA(image.Rect(0, 0, w*len(moments), h*2))
+	half := image.Rect(0, 0, sheet.Bounds().Dx(), h)
+	draw.Draw(sheet, half, image.NewUniform(color.NRGBA{0xE9, 0xEC, 0xF1, 0xFF}), image.Point{}, draw.Src)
+	draw.Draw(sheet, half.Add(image.Pt(0, h)), image.NewUniform(color.NRGBA{0x20, 0x24, 0x2C, 0xFF}), image.Point{}, draw.Src)
+	for row := range frames {
+		for i, f := range frames[row] {
+			draw.Draw(sheet, image.Rect(i*w, row*h, (i+1)*w, (row+1)*h), f, crop.Min, draw.Over)
 		}
 	}
 	return sheet

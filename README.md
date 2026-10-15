@@ -1,8 +1,9 @@
 # Tuck
 
 **Sticky notes that stay out of your way.** Tuck keeps every note in one slim
-deck at the edge of your screen. Hover and it fans out; click a note and it
-opens beside the deck; look away and it tucks itself back in.
+deck at the edge of your screen. Hover and it fans out; rest on a note to
+read it right there in the deck; click it and it opens beside the deck; look
+away and it tucks itself back in.
 
 A native Windows app in a single ~3 MB executable. No installer, no runtime,
 no account, no telemetry — your notes are plain Markdown files in a folder.
@@ -18,8 +19,12 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
 - **One deck, zero clutter** – a pill a few pixels wide shows one coloured
   dash per note. It sits against the very edge of the screen, so you can
   simply throw the pointer at it.
-- **Hover to reveal** – dashes grow into labelled tabs, one after another.
+- **Hover to reveal** – dashes grow into tabs, one after another, each with
+  the note's title, how many of its tasks are done and when it last changed.
   Move away and they fold back.
+- **Peek without opening** – rest the pointer on a tab and it grows into a
+  card showing the rest of the note, ticked tasks and all, while the tabs
+  below make room. The app you are working in keeps the focus.
 - **Click to write** – the note opens next to its tab, in a clean borderless
   window tinted in the note's colour. Saves as you type.
 - **Never steals focus** – hovering and clicking the deck does not deactivate
@@ -75,6 +80,7 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | Do this | To |
 | --- | --- |
 | Hover the pill at the screen edge | Fan out the deck |
+| Rest the pointer on a tab | Preview the note in the deck |
 | Click a tab | Open that note (click again to close it) |
 | Click **+** | Start a new note |
 | Right-click a tab, or click ⋯ in a note | Change colour, fold, copy, archive or delete |
@@ -84,6 +90,8 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | Double-click the note's header | Fold it to its title bar, or unfold it |
 | Click the pin | Keep the note on screen; other notes open beside it |
 | Click a `[ ]` box | Tick a task off (or back on) |
+
+![Notes previewed in the deck, in the light and dark themes](docs/cards.png)
 
 ![Searching for "milk" in the light and dark themes](docs/search.png)
 

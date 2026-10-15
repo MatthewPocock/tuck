@@ -146,11 +146,13 @@ func (c *Canvas) Shadow(r deck.Rect, radius, blur, dy, opacity float64) {
 	}
 	// A true Gaussian blur is overkill for shapes this small: stacking a few
 	// progressively larger, faint copies gives a convincing falloff.
-	const layers = 5
-	col := WithAlpha(shadowColor, opacity/layers)
+	// Each layer adds a step of about two pixels, so wide shadows need
+	// more of them to stay smooth.
+	layers := max(5, int(blur/2))
+	col := WithAlpha(shadowColor, opacity/float64(layers))
 	r.Y += dy
 	for i := 1; i <= layers; i++ {
-		grow := blur * float64(i) / layers
+		grow := blur * float64(i) / float64(layers)
 		c.FillRoundRect(r.Inflate(grow, grow), radius+grow, col)
 	}
 }

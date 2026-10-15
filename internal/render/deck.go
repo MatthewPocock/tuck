@@ -27,8 +27,13 @@ func DrawDeck(c *Canvas, f deck.Frame, text TextDrawer) {
 
 	for _, tab := range f.Tabs {
 		sw := Palette(tab.Item.Color, false)
-		c.Shadow(tab.Rect, tab.Radius, 6*s, 2*s, tab.Open*(tabShadow+0.10*tab.Lift))
-		c.FillRoundRect(tab.Rect, tab.Radius, sw.Fill)
+		g := tab.Grow
+		c.Shadow(tab.Rect, tab.Radius, (6+10*g)*s, (2+4*g)*s, tab.Open*(tabShadow+0.10*tab.Lift+0.10*g))
+		if g > 0 && tab.Rect.H > tab.Header {
+			drawCard(c, tab, s, f.Dark, text)
+		} else {
+			c.FillRoundRect(tab.Rect, tab.Radius, sw.Fill)
+		}
 		// A hairline in a darker shade of the fill gives the tab a crisp
 		// edge against light backgrounds.
 		c.StrokeRoundRect(tab.Rect, tab.Radius, math.Max(1, math.Round(s)), WithAlpha(sw.Ink, 0.16*tab.Open))
@@ -36,19 +41,7 @@ func DrawDeck(c *Canvas, f deck.Frame, text TextDrawer) {
 		if tab.Label <= 0 || text == nil {
 			continue
 		}
-		title := tab.Item.Title
-		ink := sw.Ink
-		if title == "" {
-			title = "New note"
-			ink = WithAlpha(ink, 0.55)
-		}
-		pad := labelPadding * s
-		text.DrawText(c.Img, pixelRect(tab.Rect.Inflate(-pad, 0)), title, TextStyle{
-			Size:    labelSize * s,
-			Bold:    tab.Active,
-			Color:   ink,
-			Opacity: tab.Label,
-		})
+		drawLabel(c, tab, s, text)
 	}
 
 	drawAdd(c, f)
@@ -116,4 +109,29 @@ func pixelRect(r deck.Rect) image.Rectangle {
 func lerpColor(a, b color.NRGBA, t float64) color.NRGBA {
 	f := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*t + 0.5) }
 	return color.NRGBA{f(a.R, b.R), f(a.G, b.G), f(a.B, b.B), f(a.A, b.A)}
+}
+
+// drawLabel writes a tab's title and, below it, its line of details.
+func drawLabel(c *Canvas, tab deck.Tab, s float64, text TextDrawer) {
+	sw := Palette(tab.Item.Color, false)
+	title := tab.Item.Title
+	ink := sw.Ink
+	if title == "" {
+		title = "New note"
+		ink = WithAlpha(ink, 0.55)
+	}
+	pad := labelPadding * s
+	r := tab.Rect.Inflate(-pad, 0)
+	style := TextStyle{Size: labelSize * s, Bold: tab.Active || tab.Grow > 0.5, Color: ink, Opacity: tab.Label}
+	if tab.Item.Meta == "" {
+		r.H = math.Min(r.H, tab.Header)
+		text.DrawText(c.Img, pixelRect(r), title, style)
+		return
+	}
+	text.DrawText(c.Img, pixelRect(deck.Rect{X: r.X, Y: r.Y + 7*s, W: r.W, H: 20 * s}), title, style)
+	text.DrawText(c.Img, pixelRect(deck.Rect{X: r.X, Y: r.Y + 26*s, W: r.W, H: 16 * s}), tab.Item.Meta, TextStyle{
+		Size:    metaSize * s,
+		Color:   WithAlpha(sw.Ink, 0.68),
+		Opacity: tab.Label,
+	})
 }

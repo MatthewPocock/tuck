@@ -440,15 +440,35 @@ func (a *App) active() []*note.Note {
 
 // syncDeck pushes the current notes to the deck and repaints it.
 func (a *App) syncDeck() {
-	notes := a.active()
-	items := make([]deck.Item, len(notes))
-	for i, n := range notes {
-		items[i] = deck.Item{ID: n.ID, Title: n.Title(), Color: n.Color}
-	}
-	a.deck.model.SetItems(items)
+	a.deck.model.SetItems(a.deckItems())
 	if a.deck.visible() {
 		a.deck.refresh()
 	}
+}
+
+// deckItems describes the active notes for the deck.
+func (a *App) deckItems() []deck.Item {
+	notes := a.active()
+	now := time.Now()
+	items := make([]deck.Item, len(notes))
+	for i, n := range notes {
+		items[i] = deck.Item{ID: n.ID, Title: n.Title(), Color: n.Color, Meta: noteMeta(n, now), Body: n.Body}
+	}
+	return items
+}
+
+// noteMeta is the line of details under a note's title in the deck: how far
+// through its tasks it is, if it has any, and when it was last changed.
+func noteMeta(n *note.Note, now time.Time) string {
+	ago := note.Ago(n.Updated, now)
+	done, total := markdown.Tasks(n.Body)
+	switch {
+	case total == 0:
+		return ago
+	case ago == "":
+		return fmt.Sprintf("%d of %d done", done, total)
+	}
+	return fmt.Sprintf("%d of %d done · %s", done, total, ago)
 }
 
 // updateHold keeps the deck expanded while a note is being edited next to it

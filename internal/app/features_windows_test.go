@@ -3,9 +3,11 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/MatthewPocock/tuck/internal/config"
+	"github.com/MatthewPocock/tuck/internal/note"
 	"github.com/MatthewPocock/tuck/internal/win32"
 )
 
@@ -181,5 +183,46 @@ func TestTickedTaskSinks(t *testing.T) {
 	click("milk")
 	if got := a.editor.text(); got != "Weekend\n- [x] milk\n- [ ] bread\n- [x] eggs" {
 		t.Errorf("with sinking off: %q", got)
+	}
+}
+
+func TestNoteMeta(t *testing.T) {
+	now := time.Date(2026, 10, 15, 14, 0, 0, 0, time.UTC)
+	n := &note.Note{Body: "Weekend\n- [ ] milk\n- [x] eggs", Updated: now.Add(-3 * time.Hour)}
+	if got := noteMeta(n, now); got != "1 of 2 done · 3h ago" {
+		t.Errorf("meta %q", got)
+	}
+	n.Body = "Just words"
+	if got := noteMeta(n, now); got != "3h ago" {
+		t.Errorf("meta without tasks %q", got)
+	}
+}
+
+func TestClickingACardOpensTheNote(t *testing.T) {
+	a := newTestApp(t)
+	n := addNote(t, a, "Groceries\n- [ ] oat milk")
+	a.syncDeck()
+	m := a.deck.model
+	m.SetHeld(true)
+	for range 100 {
+		m.Advance(16 * time.Millisecond)
+	}
+	r := m.Frame().Tabs[0].Rect
+	m.Pointer(int(r.X+r.W/2), int(r.Y+r.H/2), true)
+	for range 100 {
+		m.Advance(16 * time.Millisecond)
+	}
+	if m.Peeked() != n.ID {
+		t.Fatal("resting on the tab did not grow its card")
+	}
+	card := m.Frame().Tabs[0].Rect
+	lp := uintptr(uint32(int32(card.Y+card.H-10))<<16 | uint32(int32(card.X+20)))
+	a.deck.wndProc(a.deck.hwnd, win32.WM_LBUTTONDOWN, 0, lp)
+	a.deck.wndProc(a.deck.hwnd, win32.WM_LBUTTONUP, 0, lp)
+	if a.editorFor(n.ID) == nil {
+		t.Error("clicking the card did not open the note")
+	}
+	if m.Peeked() != "" {
+		t.Error("the card stayed open beside the editor")
 	}
 }
