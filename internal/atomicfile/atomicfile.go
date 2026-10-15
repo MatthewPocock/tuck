@@ -38,7 +38,7 @@ func Write(path string, data []byte, perm os.FileMode) (err error) {
 	if err = tmp.Close(); err != nil {
 		return fmt.Errorf("atomicfile: close: %w", err)
 	}
-	if err = os.Rename(tmpName, path); err != nil {
+	if err = Rename(tmpName, path); err != nil {
 		return fmt.Errorf("atomicfile: rename: %w", err)
 	}
 	return nil

@@ -93,11 +93,18 @@ func (t *FontText) DrawText(dst *image.RGBA, r image.Rectangle, text string, sty
 	if !ok {
 		return
 	}
+	x := fixed.I(r.Min.X)
+	switch slack := fixed.I(r.Dx()) - font.MeasureString(face, text); style.Align {
+	case render.AlignCenter:
+		x += slack / 2
+	case render.AlignRight:
+		x += slack
+	}
 	d := font.Drawer{
 		Dst:  clipped,
 		Src:  image.NewUniform(render.WithAlpha(style.Color, style.Opacity)),
 		Face: face,
-		Dot:  fixed.Point26_6{X: fixed.I(r.Min.X), Y: baseline},
+		Dot:  fixed.Point26_6{X: x, Y: baseline},
 	}
 	d.DrawString(text)
 }
@@ -121,4 +128,12 @@ func ellipsize(face font.Face, text string, width fixed.Int26_6) string {
 		}
 	}
 	return ""
+}
+
+// MeasureText implements render.TextMeasurer.
+func (t *FontText) MeasureText(text string, style render.TextStyle) float64 {
+	if style.Size <= 0 {
+		return 0
+	}
+	return float64(font.MeasureString(t.face(style), text)) / 64
 }

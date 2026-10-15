@@ -7,11 +7,16 @@ const (
 	WM_SIZE            = 0x0005
 	WM_ACTIVATE        = 0x0006
 	WM_SETFOCUS        = 0x0007
+	WM_KILLFOCUS       = 0x0008
+	WM_VSCROLL         = 0x0115
 	WM_SETTEXT         = 0x000C
 	WM_GETTEXT         = 0x000D
 	WM_GETTEXTLENGTH   = 0x000E
 	WM_PAINT           = 0x000F
 	WM_CLOSE           = 0x0010
+	WM_SYSCOMMAND      = 0x0112
+	SC_CLOSE           = 0xF060
+	WM_QUIT            = 0x0012
 	WM_ERASEBKGND      = 0x0014
 	WM_ENDSESSION      = 0x0016
 	WM_SETTINGCHANGE   = 0x001A
@@ -22,7 +27,11 @@ const (
 	WM_NCCALCSIZE      = 0x0083
 	WM_NCHITTEST       = 0x0084
 	WM_NCACTIVATE      = 0x0086
+	WM_NCLBUTTONDBLCLK = 0x00A3
 	WM_KEYDOWN         = 0x0100
+	WM_CHAR            = 0x0102
+	WM_SYSCHAR         = 0x0106
+	WM_SETICON         = 0x0080
 	WM_SYSKEYDOWN      = 0x0104
 	WM_COMMAND         = 0x0111
 	WM_TIMER           = 0x0113
@@ -40,6 +49,10 @@ const (
 	WM_HOTKEY          = 0x0312
 	WM_CONTEXTMENU     = 0x007B
 	WM_USER            = 0x0400
+	WM_SETCURSOR       = 0x0020
+	MK_SHIFT           = 0x0004
+	WM_SETREDRAW       = 0x000B
+	WM_NOTIFY          = 0x004E
 	WM_APP             = 0x8000
 	WA_INACTIVE        = 0
 	MA_NOACTIVATE      = 3
@@ -51,6 +64,9 @@ const (
 	IDC_ARROW          = 32512
 	IDC_HAND           = 32649
 	SM_CXSMICON        = 49
+	SM_CXICON          = 11
+	ICON_SMALL         = 0
+	ICON_BIG           = 1
 	CS_HREDRAW         = 0x0002
 	CS_VREDRAW         = 0x0001
 	TME_LEAVE          = 0x0002
@@ -67,11 +83,15 @@ const (
 	WS_CLIPCHILDREN = 0x02000000
 	WS_VSCROLL      = 0x00200000
 	WS_THICKFRAME   = 0x00040000
+	WS_SYSMENU      = 0x00080000
+	WS_MINIMIZEBOX  = 0x00020000
 
-	WS_EX_TOPMOST    = 0x00000008
-	WS_EX_TOOLWINDOW = 0x00000080
-	WS_EX_LAYERED    = 0x00080000
-	WS_EX_NOACTIVATE = 0x08000000
+	WS_EX_TOPMOST     = 0x00000008
+	WS_EX_APPWINDOW   = 0x00040000
+	WS_EX_TOOLWINDOW  = 0x00000080
+	WS_EX_LAYERED     = 0x00080000
+	WS_EX_TRANSPARENT = 0x00000020
+	WS_EX_NOACTIVATE  = 0x08000000
 
 	ES_MULTILINE   = 0x0004
 	ES_AUTOVSCROLL = 0x0040
@@ -86,18 +106,25 @@ const (
 	SW_SHOW           = 5
 )
 
+// WM_WINDOWPOSCHANGED is sent after a window moved, was resized, changed
+// places in the z-order or was shown or hidden.
+const WM_WINDOWPOSCHANGED = 0x0047
+
 // SetWindowPos flags and insert-after handles.
 const (
 	SWP_NOSIZE     = 0x0001
 	SWP_NOMOVE     = 0x0002
 	SWP_NOZORDER   = 0x0004
 	SWP_NOACTIVATE = 0x0010
+	SWP_SHOWWINDOW = 0x0040
+	SWP_HIDEWINDOW = 0x0080
 
 	HWND_TOPMOST HWND = ^HWND(0) // (HWND)-1
 )
 
 // WM_NCHITTEST results.
 const (
+	HTTRANSPARENT = ^uintptr(0) // -1: let the window below have the pointer
 	HTCLIENT      = 1
 	HTCAPTION     = 2
 	HTLEFT        = 10
@@ -117,9 +144,22 @@ const (
 	VK_CONTROL    = 0x11
 	VK_MENU       = 0x12
 	VK_ESCAPE     = 0x1B
+	VK_TAB        = 0x09
+	VK_RETURN     = 0x0D
+	VK_END        = 0x23
+	VK_HOME       = 0x24
+	VK_UP         = 0x26
+	VK_DOWN       = 0x28
+	VK_DELETE     = 0x2E
+	VK_LWIN       = 0x5B
+	VK_RWIN       = 0x5C
 	VK_PRIOR      = 0x21
 	VK_NEXT       = 0x22
 	VK_OEM_PERIOD = 0xBE
+	VK_OEM_PLUS   = 0xBB
+	VK_INSERT     = 0x2D
+	VK_OEM_4      = 0xDB // [ on US keyboards
+	VK_OEM_6      = 0xDD // ] on US keyboards
 )
 
 // Layered windows and GDI.
@@ -138,16 +178,20 @@ const (
 	FW_NORMAL           = 400
 	FW_SEMIBOLD         = 600
 
-	DT_LEFT         = 0x0000
-	DT_VCENTER      = 0x0004
-	DT_SINGLELINE   = 0x0020
-	DT_NOPREFIX     = 0x0800
-	DT_END_ELLIPSIS = 0x8000
+	DT_LEFT          = 0x0000
+	DT_CENTER        = 0x0001
+	DT_RIGHT         = 0x0002
+	DT_VCENTER       = 0x0004
+	DT_SINGLELINE    = 0x0020
+	DT_NOPREFIX      = 0x0800
+	DT_END_ELLIPSIS  = 0x8000
+	DT_PATH_ELLIPSIS = 0x00004000
 )
 
 // Monitors.
 const (
 	MONITOR_DEFAULTTOPRIMARY = 1
+	MONITOR_DEFAULTTONULL    = 0
 	MONITOR_DEFAULTTONEAREST = 2
 )
 
@@ -158,6 +202,7 @@ const (
 	MF_CHECKED   = 0x0008
 	MF_POPUP     = 0x0010
 	MF_SEPARATOR = 0x0800
+	MIIM_BITMAP  = 0x0080
 
 	TPM_RIGHTBUTTON = 0x0002
 	TPM_NONOTIFY    = 0x0080
@@ -177,24 +222,62 @@ const (
 
 // Rich edit control messages and flags.
 const (
-	EM_SETSEL        = 0x00B1
-	EM_REPLACESEL    = 0x00C2
-	EM_SETMARGINS    = 0x00D3
-	EM_EXGETSEL      = WM_USER + 52
-	EM_EXLIMITTEXT   = WM_USER + 53
-	EM_EXSETSEL      = WM_USER + 55
-	EM_GETSELTEXT    = WM_USER + 62
-	EM_SETBKGNDCOLOR = WM_USER + 67
-	EM_SETCHARFORMAT = WM_USER + 68
-	EM_SETEVENTMASK  = WM_USER + 69
-	EM_SETTEXTMODE   = WM_USER + 89
+	EM_SETSEL          = 0x00B1
+	EM_GETSEL          = 0x00B0
+	EM_REPLACESEL      = 0x00C2
+	EM_SETMARGINS      = 0x00D3
+	EM_SCROLLCARET     = 0x00B7
+	EM_SETCUEBANNER    = 0x1501
+	ES_AUTOHSCROLL     = 0x0080
+	EM_EXGETSEL        = WM_USER + 52
+	EM_EXLIMITTEXT     = WM_USER + 53
+	EM_EXSETSEL        = WM_USER + 55
+	EM_GETSELTEXT      = WM_USER + 62
+	EM_SETBKGNDCOLOR   = WM_USER + 67
+	EM_SETCHARFORMAT   = WM_USER + 68
+	EM_SETEVENTMASK    = WM_USER + 69
+	EM_SETTEXTMODE     = WM_USER + 89
+	EM_CHARFROMPOS     = 0x00D7
+	EM_POSFROMCHAR     = 0x00D6
+	EM_GETCHARFORMAT   = WM_USER + 58
+	EM_SETPARAFORMAT   = WM_USER + 71
+	PFM_SPACEAFTER     = 0x00000080
+	EM_UNDO            = 0x00C7
+	EM_CANUNDO         = 0x00C6
+	EM_PASTESPECIAL    = WM_USER + 64
+	EM_GETOLEINTERFACE = WM_USER + 60
+	EM_AUTOURLDETECT   = WM_USER + 91
+	EM_GETSCROLLPOS    = WM_USER + 221
+	EM_SETSCROLLPOS    = WM_USER + 222
 
-	TM_PLAINTEXT   = 1
-	ENM_CHANGE     = 0x00000001
-	SCF_ALL        = 0x0004
-	CFM_COLOR      = 0x40000000
-	EC_LEFTMARGIN  = 0x0001
-	EC_RIGHTMARGIN = 0x0002
+	TM_PLAINTEXT      = 1
+	TM_RICHTEXT       = 2
+	TM_MULTILEVELUNDO = 8
+	ENM_CHANGE        = 0x00000001
+	ENM_SELCHANGE     = 0x00080000
+	EN_SELCHANGE      = 0x0702
+	ENM_LINK          = 0x04000000
+	EN_LINK           = 0x070B
+	AURL_ENABLEURL    = 1
+	SCF_SELECTION     = 0x0001
+	SCF_ALL           = 0x0004
+	CFM_BOLD          = 0x00000001
+	CFM_ITALIC        = 0x00000002
+	CFM_UNDERLINE     = 0x00000004
+	CFM_STRIKEOUT     = 0x00000008
+	CFM_OFFSET        = 0x10000000
+	CFM_SIZE          = 0x80000000
+	CFM_FACE          = 0x20000000
+	CFM_COLOR         = 0x40000000
+	CFM_HIDDEN        = 0x00000100
+	CFM_SPACING       = 0x00200000
+	CFE_HIDDEN        = 0x0100
+	CFE_BOLD          = 0x0001
+	CFE_ITALIC        = 0x0002
+	CFE_STRIKEOUT     = 0x0008
+	CF_UNICODETEXT    = 13
+	EC_LEFTMARGIN     = 0x0001
+	EC_RIGHTMARGIN    = 0x0002
 )
 
 // Desktop Window Manager attributes.

@@ -41,6 +41,8 @@ type deckWindow struct {
 	quiet    time.Duration
 	// pressed is the element the left button went down on.
 	pressed deck.Hit
+	// peeked is the note whose card was open at the last tick.
+	peeked string
 	// hidden is set when the user hides the deck; suppressed while a
 	// full-screen app is in front. Either keeps the window off screen.
 	hidden     bool
@@ -53,6 +55,11 @@ func newDeckWindow(a *App) (*deckWindow, error) {
 		model:  deck.New(deckEdge(a.cfg.Edge)),
 		canvas: render.NewCanvas(1, 1),
 	}
+	// Tabs grow into cards that preview their note. The text renderer is
+	// looked up on each call because it is created after the deck.
+	d.model.SetCardMeasure(func(it deck.Item, scale float64) float64 {
+		return render.CardHeight(it, scale, a.text)
+	})
 	hwnd, err := createWindow(d, a.inst,
 		win32.WS_EX_LAYERED|win32.WS_EX_TOPMOST|win32.WS_EX_TOOLWINDOW|win32.WS_EX_NOACTIVATE,
 		deckClass, appName, win32.WS_POPUP)
@@ -78,13 +85,20 @@ func (d *deckWindow) place() {
 	d.model.SetEdge(deckEdge(d.app.cfg.Edge))
 	d.model.SetScale(disp.scale)
 	d.model.SetMaxHeight(int(work.Height()))
+	d.model.SetDark(d.app.dark())
 
 	w, h := d.model.Size()
 	x := work.Right - int32(w)
 	if d.app.cfg.Edge == config.EdgeLeft {
 		x = work.Left
 	}
-	y := work.Top + int32(float64(int(work.Height())-h)*d.app.cfg.Position)
+	// The window reaches beyond the deck above and below, by the inset, to
+	// leave room for a card to grow; the deck itself sits where the
+	// position setting puts it.
+	inset := d.model.Inset()
+	home := h - 2*inset
+	y := work.Top + int32(float64(int(work.Height())-home)*d.app.cfg.Position) - int32(inset)
+	d.model.SetSafeArea(int(work.Top-y), int(work.Bottom-y))
 
 	want := win32.RECT{Left: x, Top: y, Right: x + int32(w), Bottom: y + int32(h)}
 	if win32.GetWindowRect(d.hwnd) != want {
@@ -207,7 +221,22 @@ func (d *deckWindow) tick() {
 		d.model.Pointer(0, 0, false)
 	}
 
-	if d.model.Advance(dt) {
+	wasOpen := d.model.Open()
+	advanced := d.model.Advance(dt)
+	if d.model.Open() && !wasOpen {
+		// The details under each title, like "3h ago", go stale while the
+		// deck is tucked away, and the theme may have changed.
+		d.model.SetDark(d.app.dark())
+		d.model.SetItems(d.app.deckItems())
+		advanced = true
+	}
+	if peek := d.model.Peeked(); peek != d.peeked {
+		d.peeked = peek
+		if peek != "" {
+			d.app.notePeeked(peek)
+		}
+	}
+	if advanced {
 		d.render()
 		d.quiet = 0
 		if !d.fast {
@@ -276,6 +305,7 @@ func (d *deckWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintpt
 		}
 		switch hit.Kind {
 		case deck.HitTab:
+			d.model.Unpeek()
 			d.app.toggleNote(d.model.Items()[hit.Index].ID)
 		case deck.HitAdd:
 			d.app.newNote()
@@ -287,6 +317,7 @@ func (d *deckWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintpt
 		hit := d.model.HitTest(int(pt.X), int(pt.Y))
 		at, _ := win32.GetCursorPos()
 		if hit.Kind == deck.HitTab {
+			d.model.Unpeek()
 			d.app.showNoteMenu(d.model.Items()[hit.Index].ID, at)
 		} else {
 			d.app.showMainMenu(at)
@@ -308,6 +339,14 @@ func (d *deckWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintpt
 		if wp == win32.SPI_SETWORKAREA {
 			d.refresh()
 		}
+		return 0
+
+	case win32.WM_CLOSE:
+		// The deck is the app's only visible window, so this is where a
+		// polite request to close the app arrives (taskkill, installers,
+		// Restart Manager). Letting the default handler destroy just the
+		// deck would leave an invisible process that blocks relaunching.
+		d.app.quit()
 		return 0
 
 	case win32.WM_DESTROY:

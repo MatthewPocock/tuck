@@ -17,6 +17,7 @@ var (
 	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
 	procCreateFontW        = gdi32.NewProc("CreateFontW")
 	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
+	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procDeleteObject       = gdi32.NewProc("DeleteObject")
 	procGdiFlush           = gdi32.NewProc("GdiFlush")
@@ -25,6 +26,24 @@ var (
 	procSetBkMode          = gdi32.NewProc("SetBkMode")
 	procSetTextColor       = gdi32.NewProc("SetTextColor")
 )
+
+// CreateRoundRectRgn creates a region with rounded corners. The right and
+// bottom edges are exclusive; ellipse is the diameter of the corners.
+func CreateRoundRectRgn(left, top, right, bottom, ellipse int32) HRGN {
+	r, _, _ := procCreateRoundRectRgn.Call(uintptr(left), uintptr(top), uintptr(right), uintptr(bottom),
+		uintptr(ellipse), uintptr(ellipse))
+	return HRGN(r)
+}
+
+// CaptureScreen copies a rectangle of the screen, layered windows included,
+// into dst.
+func CaptureScreen(dst HDC, r RECT) {
+	const captureBlt = 0x40000000
+	screen := GetDC(0)
+	defer ReleaseDC(0, screen)
+	procBitBlt.Call(uintptr(dst), 0, 0, uintptr(r.Width()), uintptr(r.Height()),
+		uintptr(screen), uintptr(r.Left), uintptr(r.Top), SRCCOPY|captureBlt)
+}
 
 func SelectObject(dc HDC, obj HGDIOBJ) HGDIOBJ {
 	r, _, _ := procSelectObject.Call(uintptr(dc), uintptr(obj))
@@ -163,14 +182,16 @@ func (d *DIB) Detach() HBITMAP {
 func (d *DIB) CopyFrom(img *image.RGBA) {
 	b := img.Bounds()
 	w, h := min(b.Dx(), d.Width), min(b.Dy(), d.Height)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	// This runs on every frame of an animation, so swap the red and blue
+	// bytes of whole pixels at a time rather than byte by byte.
 	for y := 0; y < h; y++ {
-		src := img.Pix[y*img.Stride : y*img.Stride+w*4]
-		dst := d.Pix[y*d.Width*4 : y*d.Width*4+w*4]
-		for i := 0; i+3 < len(src); i += 4 {
-			dst[i+0] = src[i+2]
-			dst[i+1] = src[i+1]
-			dst[i+2] = src[i+0]
-			dst[i+3] = src[i+3]
+		src := unsafe.Slice((*uint32)(unsafe.Pointer(&img.Pix[y*img.Stride])), w)
+		dst := unsafe.Slice((*uint32)(unsafe.Pointer(&d.Pix[y*d.Width*4])), w)
+		for i, v := range src {
+			dst[i] = v&0xFF00FF00 | v&0xFF<<16 | v>>16&0xFF
 		}
 	}
 }

@@ -303,3 +303,37 @@ func TestAnchorsMatchExpandedLayout(t *testing.T) {
 		t.Error("TabAnchor found a note that is not in the deck")
 	}
 }
+
+func TestActiveChangeRequestsRepaint(t *testing.T) {
+	d := newDeck(Right, 2)
+	hoverPill(d)
+	x, y := center(d.Frame().Tabs[0].Rect)
+	d.Pointer(x, y, true)
+	d.SetActive("a")
+	run(d, time.Second)
+
+	// The pointer stays on the tab, so the tab keeps its hover lift and
+	// nothing animates; only the bold label of the active tab changes.
+	d.SetActive("")
+	if !d.Advance(frame) {
+		t.Fatal("Advance after SetActive reported no change; the stale active label would stay on screen")
+	}
+	if d.Advance(frame) {
+		t.Error("Advance kept reporting changes after the repaint")
+	}
+}
+
+func TestRestingPillStaysSlimForLargeDecks(t *testing.T) {
+	small, large := newDeck(Right, maxDashes), newDeck(Right, 3*maxDashes)
+	if got, want := large.Frame().Pill.H, small.Frame().Pill.H; got != want {
+		t.Errorf("pill height with %d notes = %v, want the same as with %d notes (%v)", 3*maxDashes, got, maxDashes, want)
+	}
+	f := large.Frame()
+	last := f.Tabs[maxDashes-1].Rect
+	if extra := f.Tabs[len(f.Tabs)-1].Rect; extra != last {
+		t.Errorf("collapsed tab beyond the cap at %+v, want it folded into the last dash %+v", extra, last)
+	}
+	if !f.Pill.Inflate(0, 1).Contains(last.X, last.Y+last.H-1) {
+		t.Errorf("last dash %+v lies outside the pill %+v", last, f.Pill)
+	}
+}

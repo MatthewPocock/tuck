@@ -42,7 +42,15 @@ var (
 	procMessageBoxW                   = user32.NewProc("MessageBoxW")
 	procMonitorFromPoint              = user32.NewProc("MonitorFromPoint")
 	procMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
+	procMonitorFromRect               = user32.NewProc("MonitorFromRect")
+	procGetForegroundWindow           = user32.NewProc("GetForegroundWindow")
 	procMoveWindow                    = user32.NewProc("MoveWindow")
+	procCallWindowProcW               = user32.NewProc("CallWindowProcW")
+	procSetWindowLongPtrW             = user32.NewProc("SetWindowLongPtrW")
+	procSetCursor                     = user32.NewProc("SetCursor")
+	procScreenToClient                = user32.NewProc("ScreenToClient")
+	procMsgWaitForMultipleObjectsEx   = user32.NewProc("MsgWaitForMultipleObjectsEx")
+	procPeekMessageW                  = user32.NewProc("PeekMessageW")
 	procPostMessageW                  = user32.NewProc("PostMessageW")
 	procPostQuitMessage               = user32.NewProc("PostQuitMessage")
 	procRegisterClassExW              = user32.NewProc("RegisterClassExW")
@@ -51,10 +59,15 @@ var (
 	procReleaseDC                     = user32.NewProc("ReleaseDC")
 	procSendMessageW                  = user32.NewProc("SendMessageW")
 	procSetFocus                      = user32.NewProc("SetFocus")
+	procSetMenuItemInfoW              = user32.NewProc("SetMenuItemInfoW")
 	procSetForegroundWindow           = user32.NewProc("SetForegroundWindow")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procSetTimer                      = user32.NewProc("SetTimer")
 	procSetWindowPos                  = user32.NewProc("SetWindowPos")
+	procSetWindowRgn                  = user32.NewProc("SetWindowRgn")
+	procGetFocus                      = user32.NewProc("GetFocus")
+	procGetWindowLongPtrW             = user32.NewProc("GetWindowLongPtrW")
+	procSetLayeredWindowAttributes    = user32.NewProc("SetLayeredWindowAttributes")
 	procShowWindow                    = user32.NewProc("ShowWindow")
 	procTrackMouseEvent               = user32.NewProc("TrackMouseEvent")
 	procTrackPopupMenu                = user32.NewProc("TrackPopupMenu")
@@ -147,6 +160,58 @@ func GetMessage(msg *MSG) bool {
 	return int32(r) > 0
 }
 
+// Subclass replaces the window procedure of a window, typically a control,
+// with proc, which is a callback from NewWndProc. It returns the previous
+// procedure, which proc must pass unhandled messages to with CallWindowProc.
+func Subclass(hwnd HWND, proc uintptr) uintptr {
+	const gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC, -4
+	r, _, _ := procSetWindowLongPtrW.Call(uintptr(hwnd), gwlpWndProc, proc)
+	return r
+}
+
+// CallWindowProc passes a message to a window procedure returned by
+// Subclass.
+func CallWindowProc(proc uintptr, hwnd HWND, msg uint32, wp, lp uintptr) uintptr {
+	r, _, _ := procCallWindowProcW.Call(proc, uintptr(hwnd), uintptr(msg), wp, lp)
+	return r
+}
+
+func SetCursor(c HCURSOR) {
+	procSetCursor.Call(uintptr(c))
+}
+
+// ScreenToClient converts a point from screen to client coordinates.
+func ScreenToClient(hwnd HWND, pt POINT) POINT {
+	procScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
+	return pt
+}
+
+// PeekMessage removes the next message for the calling thread from its
+// queue, if there is one.
+func PeekMessage(msg *MSG) bool {
+	const remove = 0x0001 // PM_REMOVE
+	r, _, _ := procPeekMessageW.Call(uintptr(unsafe.Pointer(msg)), 0, 0, 0, remove)
+	return r != 0
+}
+
+// WaitForMessageOr blocks until a message arrives for the calling thread or
+// the handle, if non-zero, is signalled. It reports whether the handle was.
+func WaitForMessageOr(h windows.Handle) bool {
+	const (
+		infinite         = 0xFFFFFFFF
+		qsAllInput       = 0x04FF
+		inputAvailable   = 0x0004 // MWMO_INPUTAVAILABLE
+		waitObject0      = 0
+		waitedForObjects = 1
+	)
+	var count, handles uintptr
+	if h != 0 {
+		count, handles = waitedForObjects, uintptr(unsafe.Pointer(&h))
+	}
+	r, _, _ := procMsgWaitForMultipleObjectsEx.Call(count, handles, infinite, qsAllInput, inputAvailable)
+	return h != 0 && r == waitObject0
+}
+
 func TranslateMessage(msg *MSG) {
 	procTranslateMessage.Call(uintptr(unsafe.Pointer(msg)))
 }
@@ -211,8 +276,14 @@ func KillTimer(hwnd HWND, id uintptr) {
 // UpdateLayeredWindow replaces the contents of a layered window with the
 // premultiplied 32-bit bitmap selected into src.
 func UpdateLayeredWindow(hwnd HWND, size SIZE, src HDC) error {
+	return UpdateLayeredWindowAlpha(hwnd, size, src, 255)
+}
+
+// UpdateLayeredWindowAlpha is UpdateLayeredWindow with the whole window
+// faded to opacity alpha.
+func UpdateLayeredWindowAlpha(hwnd HWND, size SIZE, src HDC, alpha uint8) error {
 	var origin POINT
-	blend := BLENDFUNCTION{BlendOp: AC_SRC_OVER, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA}
+	blend := BLENDFUNCTION{BlendOp: AC_SRC_OVER, SourceConstantAlpha: alpha, AlphaFormat: AC_SRC_ALPHA}
 	r, _, err := procUpdateLayeredWindow.Call(
 		uintptr(hwnd), 0, 0,
 		uintptr(unsafe.Pointer(&size)),
@@ -226,6 +297,42 @@ func UpdateLayeredWindow(hwnd HWND, size SIZE, src HDC) error {
 		return callErr("UpdateLayeredWindow", err)
 	}
 	return nil
+}
+
+// SetWindowRgn clips a window to a region, or removes the clipping when rgn
+// is zero. The system takes ownership of the region.
+func SetWindowRgn(hwnd HWND, rgn HRGN, redraw bool) {
+	var r uintptr
+	if redraw {
+		r = 1
+	}
+	procSetWindowRgn.Call(uintptr(hwnd), uintptr(rgn), r)
+}
+
+// ExStyle returns a window's extended style.
+func ExStyle(hwnd HWND) uint32 {
+	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE, -20
+	r, _, _ := procGetWindowLongPtrW.Call(uintptr(hwnd), gwlExStyle)
+	return uint32(r)
+}
+
+// SetExStyle changes a window's extended style.
+func SetExStyle(hwnd HWND, style uint32) {
+	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE, -20
+	procSetWindowLongPtrW.Call(uintptr(hwnd), gwlExStyle, uintptr(style))
+}
+
+// SetLayeredAlpha fades a layered window that paints itself normally to
+// opacity alpha.
+func SetLayeredAlpha(hwnd HWND, alpha uint8) {
+	const lwaAlpha = 2
+	procSetLayeredWindowAttributes.Call(uintptr(hwnd), 0, uintptr(alpha), lwaAlpha)
+}
+
+// GetFocus returns the window of this thread that has the keyboard focus.
+func GetFocus() HWND {
+	r, _, _ := procGetFocus.Call()
+	return HWND(r)
 }
 
 func GetDC(hwnd HWND) HDC {
@@ -288,6 +395,17 @@ func MonitorFromPoint(pt POINT, flags uint32) HMONITOR {
 	return HMONITOR(r)
 }
 
+// MonitorFromRect returns the monitor a rectangle mostly lies on.
+func MonitorFromRect(r RECT, flags uint32) HMONITOR {
+	h, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(&r)), uintptr(flags))
+	return HMONITOR(h)
+}
+
+func GetForegroundWindow() HWND {
+	h, _, _ := procGetForegroundWindow.Call()
+	return HWND(h)
+}
+
 func MonitorFromWindow(hwnd HWND, flags uint32) HMONITOR {
 	r, _, _ := procMonitorFromWindow.Call(uintptr(hwnd), uintptr(flags))
 	return HMONITOR(r)
@@ -341,6 +459,15 @@ func AppendMenu(menu HMENU, flags uint32, id uintptr, text string) {
 		p = UTF16(text)
 	}
 	procAppendMenuW.Call(uintptr(menu), uintptr(flags), id, uintptr(unsafe.Pointer(p)))
+}
+
+// SetMenuItemBitmap shows a bitmap beside a menu item, identified by its
+// command ID. A 32-bit bitmap with premultiplied alpha is drawn blended. The
+// menu does not take ownership of the bitmap.
+func SetMenuItemBitmap(menu HMENU, id uintptr, bmp HBITMAP) {
+	info := MENUITEMINFO{Mask: MIIM_BITMAP, BitmapItem: bmp}
+	info.Size = uint32(unsafe.Sizeof(info))
+	procSetMenuItemInfoW.Call(uintptr(menu), id, 0, uintptr(unsafe.Pointer(&info)))
 }
 
 // TrackPopupMenu shows a popup menu at a screen position and returns the ID

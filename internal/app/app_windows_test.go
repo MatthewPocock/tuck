@@ -23,16 +23,24 @@ import (
 // temporary directory, without a tray icon or global hotkeys.
 func newTestApp(t *testing.T) *App {
 	t.Helper()
+	return newTestAppIn(t, t.TempDir())
+}
+
+// newTestAppIn is newTestApp with its data in dir, so that a second app can
+// pick up where a first one left off.
+func newTestAppIn(t *testing.T, dir string) *App {
+	t.Helper()
 	// Windows belong to the thread that creates them.
 	runtime.LockOSThread()
 	t.Cleanup(runtime.UnlockOSThread)
 
-	dir := t.TempDir()
 	a := &App{
 		version: "test",
-		paths:   paths{dir: dir, config: filepath.Join(dir, "config.json"), notes: filepath.Join(dir, "notes")},
+		paths: paths{dir: dir, config: filepath.Join(dir, "config.json"), notes: filepath.Join(dir, "notes"),
+			session: filepath.Join(dir, "session.json")},
 		cfg:     config.Default(),
 		inst:    win32.ModuleHandle(),
+		instant: true,
 	}
 	var err error
 	if a.store, err = store.Open(a.paths.notes); err != nil {
@@ -43,6 +51,10 @@ func newTestApp(t *testing.T) *App {
 	}
 	t.Cleanup(func() {
 		a.editor.pinned = true // keep teardown from re-entering hide
+		a.restoring = true     // and from rewriting the session
+		for _, e := range a.pinned {
+			win32.DestroyWindow(e.hwnd)
+		}
 		win32.DestroyWindow(a.editor.hwnd)
 		win32.DestroyWindow(a.deck.hwnd)
 		win32.DestroyWindow(a.controller)
@@ -58,7 +70,7 @@ func addNote(t *testing.T, a *App, body string) *note.Note {
 	t.Helper()
 	n := note.New(time.Now().Add(time.Duration(len(a.notes))*time.Second), note.Sky)
 	n.Body = body
-	if err := a.store.Save(n); err != nil {
+	if _, err := a.store.Save(n); err != nil {
 		t.Fatal(err)
 	}
 	a.notes = append(a.notes, n)
@@ -318,7 +330,7 @@ func TestColorChangeIsSavedAndShown(t *testing.T) {
 	a.openNote(n.ID)
 	a.editor.setPinned(true)
 
-	a.cycleColor()
+	a.cycleColor(a.editor)
 	want := note.Sky.Next()
 	if n.Color != want {
 		t.Fatalf("colour = %q, want %q", n.Color, want)
@@ -342,15 +354,15 @@ func TestStepNoteCyclesThroughDeck(t *testing.T) {
 
 	a.openNote(first.ID)
 	a.editor.setPinned(true)
-	a.stepNote(+1)
+	a.stepNote(a.editor, +1)
 	if !a.editor.showing(second.ID) {
 		t.Fatal("stepNote(+1) did not move to the next note")
 	}
-	a.stepNote(+1)
+	a.stepNote(a.editor, +1)
 	if !a.editor.showing(first.ID) {
 		t.Error("stepNote(+1) did not wrap around")
 	}
-	a.stepNote(-1)
+	a.stepNote(a.editor, -1)
 	if !a.editor.showing(second.ID) {
 		t.Error("stepNote(-1) did not wrap around backwards")
 	}
@@ -460,10 +472,6 @@ func TestHeaderButtons(t *testing.T) {
 	click(render.ButtonPin)
 	if !a.editor.pinned {
 		t.Fatal("pin button did not pin the editor")
-	}
-	click(render.ButtonColor)
-	if n.Color != note.Sky.Next() {
-		t.Errorf("colour button left the colour at %q", n.Color)
 	}
 	click(render.ButtonClose)
 	if a.editor.shown {

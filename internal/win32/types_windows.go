@@ -11,6 +11,7 @@ type (
 	HFONT     uintptr
 	HBITMAP   uintptr
 	HBRUSH    uintptr
+	HRGN      uintptr
 	HGDIOBJ   uintptr
 	HMONITOR  uintptr
 	HINSTANCE uintptr
@@ -32,6 +33,43 @@ type POINT struct {
 // SIZE is a width and height in pixels.
 type SIZE struct {
 	CX, CY int32
+}
+
+// MENUITEMINFO is the Win32 MENUITEMINFOW structure.
+type MENUITEMINFO struct {
+	Size            uint32
+	Mask            uint32
+	Type            uint32
+	State           uint32
+	ID              uint32
+	SubMenu         HMENU
+	BitmapChecked   HBITMAP
+	BitmapUnchecked HBITMAP
+	ItemData        uintptr
+	TypeData        *uint16
+	Cch             uint32
+	BitmapItem      HBITMAP
+}
+
+// NMHDR is the header of every WM_NOTIFY message.
+type NMHDR struct {
+	From HWND
+	ID   uintptr
+	Code uint32
+}
+
+// ENLINK accompanies the EN_LINK notification of a rich edit control.
+type ENLINK struct {
+	Header NMHDR
+	Msg    uint32
+	WParam uintptr
+	LParam uintptr
+	Range  CHARRANGE
+}
+
+// MARGINS is the Win32 MARGINS structure.
+type MARGINS struct {
+	Left, Right, Top, Bottom int32
 }
 
 // RECT is a rectangle in pixels; Right and Bottom are exclusive.
@@ -187,6 +225,58 @@ type CHARFORMAT struct {
 	CharSet        byte
 	PitchAndFamily byte
 	FaceName       [32]uint16
+	// The fields below make this a CHARFORMAT2, without which rich edit
+	// ignores newer attributes such as hidden text.
+	Weight         uint16
+	Spacing        int16
+	BackColor      COLORREF
+	LCID           uint32
+	Cookie         uint32
+	Style          int16
+	Kerning        uint16
+	UnderlineType  byte
+	Animation      byte
+	RevAuthor      byte
+	UnderlineColor byte
+}
+
+// PARAFORMAT is the rich edit PARAFORMAT2 structure, the formatting of
+// paragraphs.
+type PARAFORMAT struct {
+	Size            uint32
+	Mask            uint32
+	Numbering       uint16
+	Effects         uint16
+	StartIndent     int32
+	RightIndent     int32
+	Offset          int32
+	Alignment       uint16
+	TabCount        int16
+	Tabs            [32]int32
+	SpaceBefore     int32
+	SpaceAfter      int32
+	LineSpacing     int32
+	Style           int16
+	LineSpacingRule byte
+	OutlineLevel    byte
+	ShadingWeight   uint16
+	ShadingStyle    uint16
+	NumberingStart  uint16
+	NumberingStyle  uint16
+	NumberingTab    uint16
+	BorderSpace     uint16
+	BorderWidth     uint16
+	Borders         uint16
+}
+
+// WINDOWPOS describes a change to a window's position, size or z-order
+// (WM_WINDOWPOSCHANGED).
+type WINDOWPOS struct {
+	Hwnd        HWND
+	InsertAfter HWND
+	X, Y        int32
+	CX, CY      int32
+	Flags       uint32
 }
 
 // CHARRANGE is a range of characters in a rich edit control.

@@ -28,6 +28,8 @@ type paths struct {
 	config string
 	notes  string // default notes folder; the config may override it
 	log    string
+	// session remembers the pinned notes between runs.
+	session string
 }
 
 // resolvePaths locates the app's data directory under %AppData%, creating it
@@ -42,10 +44,11 @@ func resolvePaths() (paths, error) {
 		return paths{}, fmt.Errorf("create the data folder: %w", err)
 	}
 	return paths{
-		dir:    dir,
-		config: filepath.Join(dir, "config.json"),
-		notes:  filepath.Join(dir, "notes"),
-		log:    filepath.Join(dir, "tuck.log"),
+		dir:     dir,
+		config:  filepath.Join(dir, "config.json"),
+		notes:   filepath.Join(dir, "notes"),
+		log:     filepath.Join(dir, "tuck.log"),
+		session: filepath.Join(dir, "session.json"),
 	}, nil
 }
 

@@ -1,12 +1,14 @@
 package render
 
 import (
+	"image/color"
+
 	"github.com/MatthewPocock/tuck/internal/deck"
 )
 
 // HeaderHeight is the height of the editor's custom title bar in
 // device-independent pixels.
-const HeaderHeight = 40
+const HeaderHeight = 42
 
 // HeaderButton identifies a control in the editor header.
 type HeaderButton int
@@ -14,8 +16,6 @@ type HeaderButton int
 // The header controls, from left to right.
 const (
 	ButtonNone HeaderButton = iota
-	// ButtonColor is the colour dot; clicking it cycles the note's colour.
-	ButtonColor
 	// ButtonNew creates another note.
 	ButtonNew
 	// ButtonMenu opens the note's menu.
@@ -58,8 +58,6 @@ func (l HeaderLayout) ButtonRect(b HeaderButton) deck.Rect {
 		return deck.Rect{X: x, Y: y, W: size, H: size}
 	}
 	switch b {
-	case ButtonColor:
-		return deck.Rect{X: buttonMargin * s, Y: y, W: size, H: size}
 	case ButtonClose:
 		return fromRight(0)
 	case ButtonPin:
@@ -74,7 +72,7 @@ func (l HeaderLayout) ButtonRect(b HeaderButton) deck.Rect {
 }
 
 // headerButtons lists every control for iteration.
-var headerButtons = []HeaderButton{ButtonColor, ButtonNew, ButtonMenu, ButtonPin, ButtonClose}
+var headerButtons = []HeaderButton{ButtonNew, ButtonMenu, ButtonPin, ButtonClose}
 
 // Hit returns the control under the point (x, y), or ButtonNone.
 func (l HeaderLayout) Hit(x, y int) HeaderButton {
@@ -94,53 +92,72 @@ type HeaderState struct {
 	Pressed HeaderButton
 	// Pinned reports whether the editor is pinned open.
 	Pinned bool
+	// Title is the note's title, shown on the left. Placeholder shows it
+	// faded, for a note with no title yet.
+	Title       string
+	Placeholder bool
 }
 
 // DrawHeader paints the editor header onto the canvas, which is resized to
-// fit and filled with the note's paper colour.
-func DrawHeader(c *Canvas, l HeaderLayout, sw Swatch, state HeaderState) {
+// fit and filled with the note's signature colour, the colour of its tab in
+// the deck.
+func DrawHeader(c *Canvas, l HeaderLayout, sw Swatch, state HeaderState, text TextDrawer) {
 	c.Resize(l.Width, l.Height())
-	c.Fill(sw.Paper)
+	c.Fill(sw.Fill)
 	s := l.Scale
+	glyph := WithAlpha(sw.Ink, 0.72)
+
+	if state.Title != "" && text != nil {
+		right := l.ButtonRect(ButtonNew)
+		r := deck.Rect{X: headerPadLeft * s, Y: 0, W: right.X - headerPadLeft*s - 8*s, H: HeaderHeight * s}
+		ink := sw.Ink
+		if state.Placeholder {
+			ink = WithAlpha(ink, 0.55)
+		}
+		text.DrawText(c.Img, pixelRect(r), state.Title, TextStyle{Size: 14 * s, Bold: true, Color: ink, Opacity: 1})
+	}
 
 	for _, b := range headerButtons {
 		r := l.ButtonRect(b)
 		switch {
 		case state.Pressed == b:
-			c.FillRoundRect(r, buttonRadius*s, WithAlpha(sw.Text, 0.16))
+			c.FillRoundRect(r, buttonRadius*s, WithAlpha(sw.Ink, 0.18))
 		case state.Hover == b:
-			c.FillRoundRect(r, buttonRadius*s, WithAlpha(sw.Text, 0.09))
+			c.FillRoundRect(r, buttonRadius*s, WithAlpha(sw.Ink, 0.10))
 		}
 
 		cx, cy := r.X+r.W/2, r.Y+r.H/2
 		stroke := 1.5 * s
 		switch b {
-		case ButtonColor:
-			c.FillCircle(cx, cy, 6.5*s, sw.Fill)
-			c.StrokeCircle(cx, cy, 6.5*s, s, WithAlpha(sw.Text, 0.28))
 		case ButtonNew:
 			arm := 5 * s
-			c.Line(cx-arm, cy, cx+arm, cy, stroke, sw.Muted)
-			c.Line(cx, cy-arm, cx, cy+arm, stroke, sw.Muted)
+			c.Line(cx-arm, cy, cx+arm, cy, stroke, glyph)
+			c.Line(cx, cy-arm, cx, cy+arm, stroke, glyph)
 		case ButtonMenu:
 			for _, dx := range []float64{-5, 0, 5} {
-				c.FillCircle(cx+dx*s, cy, 1.4*s, sw.Muted)
+				c.FillCircle(cx+dx*s, cy, 1.4*s, glyph)
 			}
 		case ButtonPin:
-			drawPin(c, cx, cy, s, sw, state.Pinned)
+			col := glyph
+			if state.Pinned {
+				col = sw.Ink
+			}
+			drawPin(c, cx, cy, s, col, state.Pinned)
 		case ButtonClose:
 			arm := 4.5 * s
-			c.Line(cx-arm, cy-arm, cx+arm, cy+arm, stroke, sw.Muted)
-			c.Line(cx-arm, cy+arm, cx+arm, cy-arm, stroke, sw.Muted)
+			c.Line(cx-arm, cy-arm, cx+arm, cy+arm, stroke, glyph)
+			c.Line(cx-arm, cy+arm, cx+arm, cy-arm, stroke, glyph)
 		}
 	}
 }
 
+// headerPadLeft lines the title up with the text of the note below it.
+const headerPadLeft = 18.0
+
 // drawPin draws a pushpin: tilted and outlined when the editor is not
 // pinned, upright and solid when it is.
-func drawPin(c *Canvas, cx, cy, s float64, sw Swatch, pinned bool) {
+func drawPin(c *Canvas, cx, cy, s float64, col color.NRGBA, pinned bool) {
 	if pinned {
-		col := sw.Text
 		c.Line(cx-3.5*s, cy-5.5*s, cx+3.5*s, cy-5.5*s, 2*s, col) // cap
 		c.Line(cx, cy-5*s, cx, cy-0.5*s, 4.2*s, col)             // body
 		c.Line(cx-4.5*s, cy, cx+4.5*s, cy, 2*s, col)             // collar
@@ -152,7 +169,6 @@ func drawPin(c *Canvas, cx, cy, s float64, sw Swatch, pinned bool) {
 	rot := func(x, y float64) (float64, float64) {
 		return cx + (x*d-y*d)*s, cy + (x*d+y*d)*s
 	}
-	col := sw.Muted
 	seg := func(x1, y1, x2, y2, w float64) {
 		ax, ay := rot(x1, y1)
 		bx, by := rot(x2, y2)

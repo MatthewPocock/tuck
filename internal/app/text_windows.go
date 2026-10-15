@@ -39,6 +39,8 @@ type maskKey struct {
 	text          string
 	width, height int
 	font          fontKey
+	align         render.Align
+	path          bool
 }
 
 // textMask is the per-pixel coverage of a rendered string.
@@ -67,7 +69,7 @@ func (t *gdiText) DrawText(dst *image.RGBA, r image.Rectangle, text string, styl
 	if r.Empty() || text == "" || style.Opacity <= 0 || style.Size < 1 {
 		return
 	}
-	key := maskKey{text, r.Dx(), r.Dy(), fontKey{int32(math.Round(style.Size)), style.Bold}}
+	key := maskKey{text, r.Dx(), r.Dy(), fontKey{int32(math.Round(style.Size)), style.Bold}, style.Align, style.Path}
 	mask, ok := t.masks[key]
 	if !ok {
 		mask = t.rasterize(key)
@@ -107,8 +109,19 @@ func (t *gdiText) rasterize(key maskKey) *textMask {
 	win32.SetBkMode(dib.DC, win32.TRANSPARENT)
 	win32.SetTextColor(dib.DC, win32.RGB(255, 255, 255))
 	bounds := win32.RECT{Right: int32(key.width), Bottom: int32(key.height)}
+	align := uint32(win32.DT_LEFT)
+	switch key.align {
+	case render.AlignCenter:
+		align = win32.DT_CENTER
+	case render.AlignRight:
+		align = win32.DT_RIGHT
+	}
+	ellipsis := uint32(win32.DT_END_ELLIPSIS)
+	if key.path {
+		ellipsis = win32.DT_PATH_ELLIPSIS
+	}
 	win32.DrawText(dib.DC, key.text, &bounds,
-		win32.DT_LEFT|win32.DT_VCENTER|win32.DT_SINGLELINE|win32.DT_END_ELLIPSIS|win32.DT_NOPREFIX)
+		align|win32.DT_VCENTER|win32.DT_SINGLELINE|ellipsis|win32.DT_NOPREFIX)
 	win32.SelectObject(dib.DC, previous)
 	win32.Flush()
 
@@ -169,4 +182,21 @@ func blendMask(dst *image.RGBA, origin image.Point, mask *textMask, style render
 			p[3] = uint8((255*a + uint32(p[3])*inv + 127) / 255)
 		}
 	}
+}
+
+// MeasureText implements render.TextMeasurer.
+func (t *gdiText) MeasureText(text string, style render.TextStyle) float64 {
+	if text == "" || style.Size < 1 {
+		return 0
+	}
+	if t.scratch == nil {
+		var err error
+		if t.scratch, err = win32.NewDIB(1, 1); err != nil {
+			t.scratch = nil
+			return 0
+		}
+	}
+	previous := win32.SelectObject(t.scratch.DC, win32.HGDIOBJ(t.font(fontKey{int32(math.Round(style.Size)), style.Bold})))
+	defer win32.SelectObject(t.scratch.DC, previous)
+	return float64(win32.TextWidth(t.scratch.DC, text))
 }

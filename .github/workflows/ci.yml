@@ -13,8 +13,8 @@ jobs:
     name: Lint and portable tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Check formatting
@@ -38,15 +38,15 @@ jobs:
     name: Windows tests and build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Test
         run: go test ./...
       - name: Build
         run: go build -trimpath -ldflags "-H=windowsgui -s -w -X main.version=${{ github.sha }}" -o tuck.exe ./cmd/tuck
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tuck-windows-amd64
           path: tuck.exe
