@@ -550,6 +550,14 @@ func (a *App) openNote(id string) {
 	a.updateHold()
 }
 
+// notePeeked runs when a tab grows into a card. Looking at another note
+// puts away the one open beside the deck, unless it is pinned.
+func (a *App) notePeeked(id string) {
+	if e := a.editor; e.shown && !e.pinned && (e.note == nil || e.note.ID != id) {
+		e.hide()
+	}
+}
+
 // toggleNote opens a note, or closes it if it is the one already open.
 func (a *App) toggleNote(id string) {
 	// A pinned note stays put; clicking its tab brings it to the front.

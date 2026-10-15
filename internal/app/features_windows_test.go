@@ -271,3 +271,28 @@ func TestNoteFadesWhenClosed(t *testing.T) {
 		t.Error("the note is still showing after the fade")
 	}
 }
+
+func TestPeekingAnotherNoteClosesTheOpenOne(t *testing.T) {
+	a := newTestApp(t)
+	first := addNote(t, a, "First")
+	addNote(t, a, "Second")
+	pinned := addNote(t, a, "Pinned")
+	a.syncDeck()
+
+	a.openNote(first.ID)
+	a.notePeeked(first.ID)
+	if !a.editor.shown {
+		t.Fatal("peeking the open note's own tab closed it")
+	}
+	a.notePeeked("other")
+	if a.editor.shown {
+		t.Error("the open note stayed open while another was peeked")
+	}
+
+	a.openNote(pinned.ID)
+	a.editor.setPinned(true)
+	a.notePeeked(first.ID)
+	if a.editorFor(pinned.ID) == nil || !a.editorFor(pinned.ID).shown {
+		t.Error("a pinned note was put away")
+	}
+}

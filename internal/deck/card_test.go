@@ -69,26 +69,44 @@ func TestSweepingAcrossTabsOpensNothing(t *testing.T) {
 	}
 }
 
-func TestMovingToAnotherCardKeepsItUnderThePointer(t *testing.T) {
+func TestMovingToAnotherCardLeavesTheDeckInPlace(t *testing.T) {
 	d := cardDeck(5)
+	top := d.Frame().Tabs[0].Rect.Y
 	rest(d, 0, time.Second)
 	if d.Peeked() != "a" {
 		t.Fatal("the first card did not open")
 	}
-	tab := d.Frame().Tabs[3].Rect
-	x, y := center(tab)
+	x, y := center(d.Frame().Tabs[3].Rect)
 	d.Pointer(x, y, true)
-	for range 100 {
-		d.Advance(frame)
-		if got := d.Frame().Tabs[3].Rect.Y; math.Abs(got-tab.Y) > 1 {
-			t.Fatalf("tab 3 moved from %v to %v under the pointer", tab.Y, got)
-		}
-	}
+	run(d, 2*time.Second)
+	f := d.Frame()
 	if d.Peeked() != "d" {
-		t.Errorf("peeked %q, want d", d.Peeked())
+		t.Fatalf("peeked %q, want d", d.Peeked())
 	}
-	if g := d.Frame().Tabs[0].Grow; g != 0 {
-		t.Errorf("the first card is still grown by %v", g)
+	if f.Tabs[0].Grow != 0 || f.Tabs[0].Rect.Y != top {
+		t.Errorf("the first tab is at %v grown by %v; the deck should stay where it was at %v", f.Tabs[0].Rect.Y, f.Tabs[0].Grow, top)
+	}
+	if card := f.Tabs[3].Rect; !card.Contains(float64(x), float64(y)) {
+		t.Errorf("the pointer at %d,%d is outside the card it opened %+v", x, y, card)
+	}
+}
+
+func TestLongCardAboveNudgesTheNextUnderThePointer(t *testing.T) {
+	d := newDeck(Right, 5)
+	d.SetCardMeasure(func(it Item, _ float64) float64 {
+		if it.ID == "a" {
+			return 350
+		}
+		return 80
+	})
+	d.SetHeld(true)
+	run(d, time.Second)
+	rest(d, 0, time.Second)
+	x, y := center(d.Frame().Tabs[3].Rect)
+	d.Pointer(x, y, true)
+	run(d, 2*time.Second)
+	if card := d.Frame().Tabs[3].Rect; d.Peeked() != "d" || !card.Contains(float64(x), float64(y)) {
+		t.Errorf("peeked %q with the pointer at %d,%d and the card at %+v", d.Peeked(), x, y, card)
 	}
 }
 

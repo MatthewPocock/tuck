@@ -41,6 +41,8 @@ type deckWindow struct {
 	quiet    time.Duration
 	// pressed is the element the left button went down on.
 	pressed deck.Hit
+	// peeked is the note whose card was open at the last tick.
+	peeked string
 	// hidden is set when the user hides the deck; suppressed while a
 	// full-screen app is in front. Either keeps the window off screen.
 	hidden     bool
@@ -227,6 +229,12 @@ func (d *deckWindow) tick() {
 		d.model.SetDark(d.app.dark())
 		d.model.SetItems(d.app.deckItems())
 		advanced = true
+	}
+	if peek := d.model.Peeked(); peek != d.peeked {
+		d.peeked = peek
+		if peek != "" {
+			d.app.notePeeked(peek)
+		}
 	}
 	if advanced {
 		d.render()

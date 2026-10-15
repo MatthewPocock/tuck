@@ -76,9 +76,6 @@ const (
 	settleSpeed = 120.0
 	settleTime  = 0.025
 	peekDelay   = 0.15
-	// relaxSpeed is how fast, in device-independent pixels per second, the
-	// deck slides back to its home once no card is open.
-	relaxSpeed = 1400.0
 )
 
 // Item is one note as shown in the deck.
@@ -214,10 +211,10 @@ type Deck struct {
 	skipID string
 	// peekAway is how long the pointer has been away from an open card.
 	peekAway float64
-	// offset shifts the expanded tabs vertically, in pixels, to keep the
-	// card under the pointer still while others open and close, and to keep
-	// the card on screen.
-	offset float64
+	// offset shifts the expanded tabs vertically, in pixels, springing
+	// toward offsetTarget: zero, unless the open card needs nudging to stay
+	// on screen or to stay under the pointer.
+	offset, offsetV, offsetTarget float64
 	// safeTop and safeBottom bound where a card may be drawn, in window
 	// pixels; safeBottom is zero when unset.
 	safeTop, safeBottom float64
@@ -502,8 +499,13 @@ func (d *Deck) updatePeek(sec float64, hit Hit) bool {
 		if over != d.dwellID {
 			d.dwellID, d.dwell = over, 0
 		}
-		if d.dwell += sec; d.dwell >= peekDelay || d.still >= settleTime {
+		d.dwell += sec
+		// While cards are still opening or closing, tabs slide under a
+		// pointer that has not moved; wait until they stop before taking
+		// the tab underneath as the one wanted.
+		if (d.dwell >= peekDelay || d.still >= settleTime) && !d.cardsMoving() {
 			d.peekID, d.dwellID = over, ""
+			d.offsetTarget = d.targetOffset(d.index(over))
 		}
 	default:
 		d.dwellID = ""
@@ -522,10 +524,6 @@ func (d *Deck) updatePeek(sec float64, hit Hit) bool {
 // keeping the open card where it is while the tabs above it change size.
 func (d *Deck) updateCards(sec float64) bool {
 	p := d.index(d.peekID)
-	anchor := 0.0
-	if p >= 0 {
-		anchor = d.slotY(p, false)
-	}
 	changed := false
 	for i := range d.grow {
 		want := 0.0
@@ -536,37 +534,53 @@ func (d *Deck) updateCards(sec float64) bool {
 			changed = true
 		}
 	}
-	offset := d.offset
-	if p >= 0 {
-		offset += anchor - d.slotY(p, false)
-		offset = d.keepOnScreen(p, offset)
-	} else {
-		offset = approach(offset, 0, sec*relaxSpeed*d.scale)
+	if p < 0 {
+		d.offsetTarget = 0
 	}
-	if offset != d.offset {
-		d.offset = offset
+	// The deck moves with the same spring as the cards, so that a nudge
+	// reads as part of the same motion.
+	if defaultSpatial.step(&d.offset, &d.offsetV, d.offsetTarget, sec) {
 		changed = true
 	}
 	return changed
 }
 
-// keepOnScreen adjusts offset so that the card of tab i lies within the
-// safe area.
-func (d *Deck) keepOnScreen(i int, offset float64) float64 {
+// cardsMoving reports whether any card is still opening or closing.
+func (d *Deck) cardsMoving() bool {
+	for _, v := range d.growV {
+		if v != 0 {
+			return true
+		}
+	}
+	return d.offsetV != 0
+}
+
+// targetOffset is where the deck should settle once tab i's card has fully
+// opened and every other card has closed. The deck stays where it is unless
+// that would leave the pointer outside the card, or the card off screen,
+// and then moves only as far as needed.
+func (d *Deck) targetOffset(i int) float64 {
+	s := d.scale
+	top := d.slotY(i, true)
+	bottom := top + d.cardHeight(i)
+	offset := 0.0
+	if d.pointerIn {
+		pad := tabHeight * s / 2
+		if d.pointerY > bottom-pad {
+			offset = d.pointerY - (bottom - pad)
+		}
+	}
 	_, h := d.Size()
 	lo, hi := d.safeTop, d.safeBottom
 	if hi <= lo {
 		lo, hi = 0, float64(h)
 	}
-	lo, hi = max(lo, 0)+margin*d.scale, min(hi, float64(h))-margin*d.scale
-	top := d.slotY(i, false) - d.offset + offset
-	bottom := top + d.height(i, false)
-	if bottom > hi {
-		offset -= bottom - hi
-		top -= bottom - hi
+	lo, hi = max(lo, 0)+margin*s, min(hi, float64(h))-margin*s
+	if bottom+offset > hi {
+		offset = hi - bottom
 	}
-	if top < lo {
-		offset += lo - top
+	if top+offset < lo {
+		offset = lo - top
 	}
 	e := d.extra()
 	return clamp(offset, -e, e)
