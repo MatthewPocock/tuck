@@ -25,6 +25,7 @@ const (
 	WM_NCCALCSIZE      = 0x0083
 	WM_NCHITTEST       = 0x0084
 	WM_NCACTIVATE      = 0x0086
+	WM_NCLBUTTONDBLCLK = 0x00A3
 	WM_KEYDOWN         = 0x0100
 	WM_CHAR            = 0x0102
 	WM_SYSCHAR         = 0x0106
@@ -134,6 +135,12 @@ const (
 	VK_CONTROL    = 0x11
 	VK_MENU       = 0x12
 	VK_ESCAPE     = 0x1B
+	VK_TAB        = 0x09
+	VK_RETURN     = 0x0D
+	VK_END        = 0x23
+	VK_HOME       = 0x24
+	VK_UP         = 0x26
+	VK_DOWN       = 0x28
 	VK_DELETE     = 0x2E
 	VK_LWIN       = 0x5B
 	VK_RWIN       = 0x5C
@@ -207,8 +214,12 @@ const (
 // Rich edit control messages and flags.
 const (
 	EM_SETSEL          = 0x00B1
+	EM_GETSEL          = 0x00B0
 	EM_REPLACESEL      = 0x00C2
 	EM_SETMARGINS      = 0x00D3
+	EM_SCROLLCARET     = 0x00B7
+	EM_SETCUEBANNER    = 0x1501
+	ES_AUTOHSCROLL     = 0x0080
 	EM_EXGETSEL        = WM_USER + 52
 	EM_EXLIMITTEXT     = WM_USER + 53
 	EM_EXSETSEL        = WM_USER + 55

@@ -109,7 +109,11 @@ func (a *App) saveSession() {
 	for _, e := range a.editors() {
 		if e.shown && e.pinned && e.note != nil && !e.note.Empty() {
 			r := win32.GetWindowRect(e.hwnd)
-			s.Pinned = append(s.Pinned, config.PinnedNote{ID: e.note.ID, X: r.Left, Y: r.Top, Width: r.Width(), Height: r.Height()})
+			p := config.PinnedNote{ID: e.note.ID, X: r.Left, Y: r.Top, Width: r.Width(), Height: r.Height(), Folded: e.folded}
+			if e.folded {
+				p.Height = e.fullHeight
+			}
+			s.Pinned = append(s.Pinned, p)
 		}
 	}
 	if err := s.Save(a.paths.session); err != nil {
@@ -144,5 +148,8 @@ func (a *App) restoreSession() {
 		}
 		a.pinned = append(a.pinned, e)
 		e.restore(n, r, float64(win32.GetDpiForMonitor(mon))/win32.USER_DEFAULT_DPI)
+		if p.Folded {
+			e.setFolded(true)
+		}
 	}
 }

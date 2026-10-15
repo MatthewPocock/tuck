@@ -51,6 +51,9 @@ type Config struct {
 	// NotesDir overrides where notes are stored. Empty means the default
 	// location next to the config file.
 	NotesDir string `json:"notes_dir,omitempty"`
+	// SinkDoneTasks moves a task to the end of its list when it is ticked
+	// off, so that the open tasks stay together at the top.
+	SinkDoneTasks bool `json:"sink_done_tasks"`
 	// Hotkeys are the global keyboard shortcuts. An empty shortcut is
 	// disabled.
 	Hotkeys Hotkeys `json:"hotkeys"`
@@ -62,6 +65,8 @@ type Hotkeys struct {
 	NewNote string `json:"new_note"`
 	// ToggleDeck hides or shows the deck.
 	ToggleDeck string `json:"toggle_deck"`
+	// Search opens the search window.
+	Search string `json:"search"`
 }
 
 // Limits for the editor size, in device-independent pixels.
@@ -74,15 +79,17 @@ const (
 // Default returns the settings used on first run.
 func Default() Config {
 	return Config{
-		Edge:         EdgeRight,
-		Position:     0.5,
-		Theme:        ThemeSystem,
-		EditorWidth:  360,
-		EditorHeight: 420,
-		FontSize:     11,
+		Edge:          EdgeRight,
+		Position:      0.5,
+		Theme:         ThemeSystem,
+		EditorWidth:   360,
+		EditorHeight:  420,
+		FontSize:      11,
+		SinkDoneTasks: true,
 		Hotkeys: Hotkeys{
 			NewNote:    "Ctrl+Alt+N",
 			ToggleDeck: "Ctrl+Alt+H",
+			Search:     "Ctrl+Alt+F",
 		},
 	}
 }

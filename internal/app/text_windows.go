@@ -183,3 +183,20 @@ func blendMask(dst *image.RGBA, origin image.Point, mask *textMask, style render
 		}
 	}
 }
+
+// MeasureText implements render.TextMeasurer.
+func (t *gdiText) MeasureText(text string, style render.TextStyle) float64 {
+	if text == "" || style.Size < 1 {
+		return 0
+	}
+	if t.scratch == nil {
+		var err error
+		if t.scratch, err = win32.NewDIB(1, 1); err != nil {
+			t.scratch = nil
+			return 0
+		}
+	}
+	previous := win32.SelectObject(t.scratch.DC, win32.HGDIOBJ(t.font(fontKey{int32(math.Round(style.Size)), style.Bold})))
+	defer win32.SelectObject(t.scratch.DC, previous)
+	return float64(win32.TextWidth(t.scratch.DC, text))
+}

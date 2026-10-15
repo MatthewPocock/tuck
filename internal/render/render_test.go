@@ -183,7 +183,7 @@ func TestDrawHeaderFillsWithPaper(t *testing.T) {
 	sw := Palette(note.Mint, true)
 	l := HeaderLayout{Width: 300, Scale: 1}
 	c := NewCanvas(1, 1)
-	DrawHeader(c, l, sw, HeaderState{Hover: ButtonClose, Pinned: true})
+	DrawHeader(c, l, sw, HeaderState{Hover: ButtonClose, Pinned: true}, nil)
 
 	if b := c.Img.Bounds(); b.Dx() != 300 || b.Dy() != l.Height() {
 		t.Fatalf("canvas is %v", b)

@@ -51,6 +51,22 @@ func TestSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newTestApp(t)
+	save := func(name string, hwnd win32.HWND) {
+		t.Helper()
+		path := filepath.Join(snapshotDir, name+".png")
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, capture(t, hwnd)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", path)
+	}
+	addNote(t, a, "Standup\nAsk Sam about the milk budget")
 	n := addNote(t, a, "Groceries for the weekend\n\n- [ ] oat milk\n- [x] coffee beans\n- [ ] something green\n\nRemember the **reusable bags**.")
 
 	for _, theme := range []config.Theme{config.ThemeLight, config.ThemeDark} {
@@ -61,19 +77,19 @@ func TestSnapshots(t *testing.T) {
 			a.setColor(n.ID, c)
 			win32.UpdateWindow(a.editor.hwnd)
 			win32.UpdateWindow(a.editor.edit)
-
-			path := filepath.Join(snapshotDir, "editor-"+string(theme)+"-"+string(c)+".png")
-			f, err := os.Create(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := png.Encode(f, capture(t, a.editor.hwnd)); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.Close(); err != nil {
-				t.Fatal(err)
-			}
-			t.Logf("wrote %s", path)
+			save("editor-"+string(theme)+"-"+string(c), a.editor.hwnd)
 		}
+		a.editor.setFolded(true)
+		win32.UpdateWindow(a.editor.hwnd)
+		save("folded-"+string(theme), a.editor.hwnd)
+		a.editor.setFolded(false)
+
+		a.showSearch()
+		win32.SetWindowText(a.search.input, "milk")
+		win32.UpdateWindow(a.search.hwnd)
+		win32.UpdateWindow(a.search.input)
+		save("search-"+string(theme), a.search.hwnd)
+		a.search.hide()
 	}
+	win32.DestroyWindow(a.search.hwnd)
 }

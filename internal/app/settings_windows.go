@@ -109,9 +109,12 @@ func (w *settingsWindow) activate(c settings.Control, option int) {
 		}
 	case settings.FontSmaller, settings.FontLarger:
 		a.setFontSize(settings.StepFont(a.cfg.FontSize, c))
-	case settings.NewNoteKey, settings.ToggleDeckKey:
+	case settings.NewNoteKey, settings.ToggleDeckKey, settings.SearchKey:
 		w.startCapture(c)
 		return
+	case settings.SinkTasks:
+		a.cfg.SinkDoneTasks = !a.cfg.SinkDoneTasks
+		a.saveConfig()
 	case settings.Autostart:
 		if err := setAutostart(!autostartEnabled()); err != nil {
 			log.Printf("autostart: %v", err)
@@ -178,13 +181,14 @@ func (w *settingsWindow) captureKey(vk, mods uint32) {
 		w.endCapture("That key cannot be used in a shortcut.")
 		return
 	}
-	other := w.app.cfg.Hotkeys.ToggleDeck
-	if field == settings.ToggleDeckKey {
-		other = w.app.cfg.Hotkeys.NewNote
-	}
-	if o, err := hotkey.Parse(other); err == nil && o == h {
-		w.endCapture(name + " is already used by the other shortcut.")
-		return
+	for _, other := range settings.HotkeyControls {
+		if other == field {
+			continue
+		}
+		if o, err := hotkey.Parse(w.hotkey(other)); err == nil && o == h {
+			w.endCapture(name + " is already used by another of Tuck's shortcuts.")
+			return
+		}
 	}
 
 	previous := w.hotkey(field)
@@ -202,18 +206,11 @@ func (w *settingsWindow) captureKey(vk, mods uint32) {
 }
 
 func (w *settingsWindow) hotkey(c settings.Control) string {
-	if c == settings.ToggleDeckKey {
-		return w.app.cfg.Hotkeys.ToggleDeck
-	}
-	return w.app.cfg.Hotkeys.NewNote
+	return *settings.Hotkey(&w.app.cfg.Hotkeys, c)
 }
 
 func (w *settingsWindow) setHotkey(c settings.Control, value string) {
-	if c == settings.ToggleDeckKey {
-		w.app.cfg.Hotkeys.ToggleDeck = value
-	} else {
-		w.app.cfg.Hotkeys.NewNote = value
-	}
+	*settings.Hotkey(&w.app.cfg.Hotkeys, c) = value
 	w.app.saveConfig()
 }
 

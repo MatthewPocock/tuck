@@ -24,6 +24,7 @@ import (
 	"github.com/MatthewPocock/tuck/internal/fonttext"
 	"github.com/MatthewPocock/tuck/internal/note"
 	"github.com/MatthewPocock/tuck/internal/render"
+	"github.com/MatthewPocock/tuck/internal/search"
 	"github.com/MatthewPocock/tuck/internal/settings"
 )
 
@@ -83,8 +84,9 @@ func run(dir string, scale float64) error {
 	images := map[string]image.Image{
 		"deck-right.png": deckStrip(deck.Right, scale, text),
 		"deck-left.png":  deckStrip(deck.Left, scale, text),
-		"header.png":     headers(scale),
+		"header.png":     headers(scale, text),
 		"settings.png":   settingsWindow(scale),
+		"search.png":     searchWindow(scale, text),
 		"icon.png":       icons(),
 	}
 	for name, img := range images {
@@ -177,8 +179,41 @@ func settingsWindow(scale float64) image.Image {
 	return out
 }
 
+// searchWindow renders the search window in the light and dark themes,
+// side by side, with a query typed in.
+func searchWindow(scale float64, text render.TextDrawer) image.Image {
+	at := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	var notes []*note.Note
+	for i, body := range []string{
+		"Groceries for the weekend\n- [ ] oat milk\n- [x] coffee beans",
+		"Standup: blocked on review\nAsk Sam about the milk budget for the office",
+		"Ideas for Ana's birthday\nA milk frother?",
+		"Old recipes\nMilk bread, brioche",
+	} {
+		n := note.New(at.Add(time.Duration(i)*time.Hour), note.Colors[i*2%len(note.Colors)])
+		n.Body = body
+		n.Archived = i == 3
+		notes = append(notes, n)
+	}
+	results := search.Find(notes, "milk")
+	l := search.NewLayout(scale, len(results), 1, 0)
+	gap := int(16 * scale)
+	out := image.NewRGBA(image.Rect(0, 0, 2*l.Width+gap, l.Height))
+	for i, dark := range []bool{false, true} {
+		c := render.NewCanvas(1, 1)
+		render.DrawSearch(c, l, render.SearchState{Query: "milk", Results: results, Selected: 1, Hover: -1}, dark, text)
+		// The query itself is a native text box; stand in for it.
+		_, ink := render.SearchColors(dark)
+		r := l.Input
+		text.DrawText(c.Img, image.Rect(int(r.X), int(r.Y), int(r.X+r.W), int(r.Y+r.H)), "milk",
+			render.TextStyle{Size: 17 * scale, Color: ink, Opacity: 1})
+		draw.Draw(out, c.Img.Bounds().Add(image.Pt(i*(l.Width+gap), 0)), c.Img, image.Point{}, draw.Src)
+	}
+	return out
+}
+
 // headers renders the editor header for every colour in both themes.
-func headers(scale float64) image.Image {
+func headers(scale float64, text render.TextDrawer) image.Image {
 	layout := render.HeaderLayout{Width: int(360 * scale), Scale: scale}
 	h := layout.Height()
 	sheet := image.NewRGBA(image.Rect(0, 0, layout.Width*2, h*len(note.Colors)))
@@ -188,8 +223,12 @@ func headers(scale float64) image.Image {
 			if i == 2 {
 				state.Hover = render.ButtonMenu
 			}
+			if i == 3 {
+				// Folded to its title bar.
+				state.Title = "Groceries for the weekend"
+			}
 			c := render.NewCanvas(1, 1)
-			render.DrawHeader(c, layout, render.Palette(col, dark), state)
+			render.DrawHeader(c, layout, render.Palette(col, dark), state, text)
 			at := image.Pt(j*layout.Width, i*h)
 			draw.Draw(sheet, c.Img.Bounds().Add(at), c.Img, image.Point{}, draw.Src)
 		}

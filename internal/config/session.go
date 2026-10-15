@@ -19,13 +19,15 @@ type Session struct {
 }
 
 // PinnedNote is a note pinned to the screen, with its window rectangle in
-// physical pixels.
+// physical pixels. A folded note shows only its title bar; Height is then
+// its height unfolded.
 type PinnedNote struct {
 	ID     string `json:"id"`
 	X      int32  `json:"x"`
 	Y      int32  `json:"y"`
 	Width  int32  `json:"width"`
 	Height int32  `json:"height"`
+	Folded bool   `json:"folded,omitempty"`
 }
 
 // LoadSession reads the session at path. A missing or unreadable file yields

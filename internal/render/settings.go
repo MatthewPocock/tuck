@@ -149,7 +149,7 @@ func DrawSettings(c *Canvas, l settings.Layout, s settings.State, dark bool, tex
 			draw(r, label, settingsTextSize, bold, col, AlignCenter)
 
 		case settings.KindToggle:
-			on := s.Autostart
+			on := s.On(it.Control)
 			track := p.control
 			if on {
 				track = p.accent
@@ -192,10 +192,7 @@ func DrawSettings(c *Canvas, l settings.Layout, s settings.State, dark bool, tex
 // hotkeyLabel is the shortcut a hotkey field shows, normalised to the
 // canonical spelling.
 func hotkeyLabel(s settings.State, c settings.Control) string {
-	raw := s.Config.Hotkeys.NewNote
-	if c == settings.ToggleDeckKey {
-		raw = s.Config.Hotkeys.ToggleDeck
-	}
+	raw := *settings.Hotkey(&s.Config.Hotkeys, c)
 	h, err := hotkey.Parse(raw)
 	if err != nil {
 		return raw

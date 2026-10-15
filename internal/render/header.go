@@ -94,14 +94,24 @@ type HeaderState struct {
 	Pressed HeaderButton
 	// Pinned reports whether the editor is pinned open.
 	Pinned bool
+	// Title is shown between the colour dot and the buttons. The editor
+	// sets it while the note is folded to its header.
+	Title string
 }
 
 // DrawHeader paints the editor header onto the canvas, which is resized to
 // fit and filled with the note's paper colour.
-func DrawHeader(c *Canvas, l HeaderLayout, sw Swatch, state HeaderState) {
+func DrawHeader(c *Canvas, l HeaderLayout, sw Swatch, state HeaderState, text TextDrawer) {
 	c.Resize(l.Width, l.Height())
 	c.Fill(sw.Paper)
 	s := l.Scale
+
+	if state.Title != "" && text != nil {
+		left := l.ButtonRect(ButtonColor)
+		right := l.ButtonRect(ButtonNew)
+		r := deck.Rect{X: left.X + left.W + 4*s, Y: 0, W: right.X - left.X - left.W - 12*s, H: HeaderHeight * s}
+		text.DrawText(c.Img, pixelRect(r), state.Title, TextStyle{Size: 13 * s, Bold: true, Color: sw.Text, Opacity: 1})
+	}
 
 	for _, b := range headerButtons {
 		r := l.ButtonRect(b)

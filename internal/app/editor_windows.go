@@ -59,6 +59,10 @@ type editorWindow struct {
 	note   *note.Note
 	shown  bool
 	pinned bool
+	// folded is true while a pinned note is rolled up into its header;
+	// fullHeight is then the window's height unfolded.
+	folded     bool
+	fullHeight int32
 	// loading suppresses change notifications while text is set from code.
 	loading bool
 	dirty   bool
@@ -178,6 +182,11 @@ func (e *editorWindow) hide() {
 	e.shown = false
 	e.flush()
 	win32.ShowWindow(e.hwnd, win32.SW_HIDE)
+	if e.folded {
+		// The next note opens at full size.
+		e.folded = false
+		win32.ShowWindow(e.edit, win32.SW_SHOW)
+	}
 
 	n := e.note
 	e.note = nil
@@ -205,10 +214,55 @@ func (e *editorWindow) restore(n *note.Note, at win32.RECT, scale float64) {
 	e.shown = true
 }
 
-// focus brings the editor to the front and puts the keyboard in it.
+// focus brings the editor to the front, unfolded, and puts the keyboard in
+// it.
 func (e *editorWindow) focus() {
+	e.setFolded(false)
 	win32.SetForegroundWindow(e.hwnd)
 	win32.SetFocus(e.edit)
+}
+
+// setFolded rolls the note up into its header, or back down. Folding pins
+// the note: a folded note is one the user wants to keep at hand.
+func (e *editorWindow) setFolded(folded bool) {
+	if e.folded == folded || !e.shown {
+		return
+	}
+	r := win32.GetWindowRect(e.hwnd)
+	if folded {
+		e.flush()
+		e.setPinned(true)
+		e.folded, e.fullHeight = true, r.Height()
+		win32.ShowWindow(e.edit, win32.SW_HIDE)
+		win32.SetWindowPos(e.hwnd, 0, 0, 0, r.Width(), int32(e.headerLayout().Height()),
+			win32.SWP_NOMOVE|win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+	} else {
+		e.folded = false
+		// Unfold downwards, unless that would run off the bottom of the
+		// screen.
+		top := r.Top
+		if mi, ok := win32.GetMonitorInfo(win32.MonitorFromWindow(e.hwnd, win32.MONITOR_DEFAULTTONEAREST)); ok {
+			top = max(mi.Work.Top, min(top, mi.Work.Bottom-e.fullHeight))
+		}
+		win32.SetWindowPos(e.hwnd, 0, r.Left, top, r.Width(), e.fullHeight, win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+		e.layout()
+		win32.ShowWindow(e.edit, win32.SW_SHOW)
+	}
+	win32.InvalidateRect(e.hwnd, nil)
+	e.app.saveSession()
+}
+
+// reveal selects the n bytes of the note's text from byte at, such as a
+// search match, and scrolls them into view.
+func (e *editorWindow) reveal(at, n int) {
+	text := e.text()
+	if at < 0 || at+n > len(text) {
+		return
+	}
+	pos := utf16Offsets(text)
+	sel := win32.CHARRANGE{Min: pos[at], Max: pos[at+n]}
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+	win32.SendMessage(e.edit, win32.EM_SCROLLCARET, 0, 0)
 }
 
 // reload shows the open note's text again after it changed on disk, keeping
@@ -358,7 +412,14 @@ func (e *editorWindow) paint() {
 	if layout.Width <= 0 {
 		return
 	}
-	render.DrawHeader(e.header, layout, e.sw, render.HeaderState{Hover: e.hover, Pressed: e.pressed, Pinned: e.pinned})
+	state := render.HeaderState{Hover: e.hover, Pressed: e.pressed, Pinned: e.pinned}
+	if e.folded && e.note != nil {
+		state.Title = e.note.Title()
+		if state.Title == "" {
+			state.Title = "Untitled"
+		}
+	}
+	render.DrawHeader(e.header, layout, e.sw, state, e.app.text)
 
 	w, h := layout.Width, layout.Height()
 	if e.dib == nil || e.dib.Width != w || e.dib.Height != h {
@@ -404,7 +465,8 @@ func (e *editorWindow) hitTest(screen win32.POINT) uintptr {
 	border := e.px(resizeBorder)
 
 	left, right := x < border, x >= r.Width()-border
-	top, bottom := y < border, y >= r.Height()-border
+	// A folded note is as tall as its header and only gets wider.
+	top, bottom := y < border && !e.folded, y >= r.Height()-border && !e.folded
 	switch {
 	case top && left:
 		return win32.HTTOPLEFT
@@ -456,6 +518,9 @@ func (e *editorWindow) setPinned(pinned bool) {
 	if e.pinned == pinned {
 		return
 	}
+	if !pinned {
+		e.setFolded(false)
+	}
 	e.pinned = pinned
 	e.invalidateHeader()
 	e.app.updateHold()
@@ -486,6 +551,8 @@ func (e *editorWindow) handleKey(vk uintptr) bool {
 	switch vk {
 	case 'N':
 		e.app.newNote()
+	case 'F':
+		e.app.showSearch()
 	case 'W':
 		e.hide()
 	case 'S':
@@ -549,7 +616,11 @@ func (e *editorWindow) endMove() {
 	resized := r.Width() != e.moveStart.Width() || r.Height() != e.moveStart.Height()
 	moved := r.Left != e.moveStart.Left || r.Top != e.moveStart.Top
 
-	if resized {
+	if resized && e.folded {
+		// Only the width can change; keep it for when the note unfolds.
+		e.app.cfg.EditorWidth = int(math.Round(float64(r.Width()) / e.scale))
+		e.app.saveConfig()
+	} else if resized {
 		e.app.cfg.EditorWidth = int(math.Round(float64(r.Width()) / e.scale))
 		e.app.cfg.EditorHeight = int(math.Round(float64(r.Height()) / e.scale))
 		e.app.saveConfig()
@@ -579,7 +650,17 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 	case win32.WM_GETMINMAXINFO:
 		info := win32.PointerFromLParam[win32.MINMAXINFO](lp)
 		info.MinTrackSize = win32.POINT{X: e.px(config.MinEditorWidth), Y: e.px(config.MinEditorHeight)}
+		if e.folded {
+			info.MinTrackSize.Y = int32(e.headerLayout().Height())
+		}
 		return 0
+
+	case win32.WM_NCLBUTTONDBLCLK:
+		// Double-clicking the header folds the note up, as in Stickies.
+		if wp == win32.HTCAPTION {
+			e.setFolded(!e.folded)
+			return 0
+		}
 
 	case win32.WM_SIZE:
 		if e.edit != 0 {
@@ -603,7 +684,9 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 		return uintptr(e.paper)
 
 	case win32.WM_SETFOCUS:
-		win32.SetFocus(e.edit)
+		if !e.folded {
+			win32.SetFocus(e.edit)
+		}
 		return 0
 
 	case win32.WM_ACTIVATE:

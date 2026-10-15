@@ -27,9 +27,15 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
 - **Pin as many as you like** – pin a note, or just drag it somewhere, and it
   stays on top while you work. Open another and it gets a window of its own;
   pinned notes come back where you left them when Tuck restarts.
+- **Fold it away** – double-click a note's header to roll it up into a slim
+  title bar, and again to roll it back down.
+- **Search everything** – `Ctrl+Alt+F` finds any note by its words, archived
+  ones included, and opens it with the match selected. With nothing typed it
+  lists your most recent notes, so it doubles as a quick switcher.
 - **Light Markdown** – headings, **bold**, _italic_, `code` and links are
-  styled as you type, and `- [ ]` tasks tick off with a click. The file
-  stays plain Markdown.
+  styled as you type, and `- [ ]` tasks tick off with a click, sinking below
+  the ones still to do. The file stays plain Markdown, and a note can be
+  copied either as Markdown or as plain text.
 - **Seven colours**, light and dark themes (follows Windows by default).
 - **Archive and undo** – archive notes you are done with; deleted notes go to
   a trash folder and the last one can be restored from the menu.
@@ -71,12 +77,15 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | Hover the pill at the screen edge | Fan out the deck |
 | Click a tab | Open that note (click again to close it) |
 | Click **+** | Start a new note |
-| Right-click a tab | Change colour, archive or delete |
+| Right-click a tab, or click ⋯ in a note | Change colour, fold, copy, archive or delete |
 | Right-click the deck or the tray icon | Settings and everything else |
 | Scroll over the deck | Scroll when there are more notes than fit |
 | Drag the note's header | Move it — it stays pinned where you drop it |
+| Double-click the note's header | Fold it to its title bar, or unfold it |
 | Click the pin | Keep the note on screen; other notes open beside it |
 | Click a `[ ]` box | Tick a task off (or back on) |
+
+![Searching for "milk" in the light and dark themes](docs/search.png)
 
 ### Keyboard
 
@@ -84,6 +93,7 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | --- | --- |
 | `Ctrl+Alt+N` | New note (works anywhere) |
 | `Ctrl+Alt+H` | Hide or show the deck (works anywhere) |
+| `Ctrl+Alt+F` | Search notes (works anywhere; `Ctrl+F` in a note) |
 | `Esc` or `Ctrl+W` | Close the note |
 | `Ctrl+N` | New note |
 | `Ctrl+PgDn` / `Ctrl+PgUp` | Next / previous note |
@@ -126,7 +136,8 @@ one is kept next to it as a separate note named `… (conflict <date>)`.
 
 Right-click the tray icon or the deck and choose **Settings…** to change the
 screen edge, position, theme, text size, shortcuts (click one and press the
-new keys), start-up and the notes folder. Changes apply immediately.
+new keys), whether ticked tasks move to the end of their list, start-up and
+the notes folder. Changes apply immediately.
 
 ![The settings window in the light and dark themes](docs/settings.png)
 
@@ -142,9 +153,11 @@ settings file**; restart Tuck after editing by hand):
   "editor_height": 420,
   "font_size": 11,
   "notes_dir": "D:\\OneDrive\\Notes",
+  "sink_done_tasks": true,
   "hotkeys": {
     "new_note": "Ctrl+Alt+N",
-    "toggle_deck": "Ctrl+Alt+H"
+    "toggle_deck": "Ctrl+Alt+H",
+    "search": "Ctrl+Alt+F"
   }
 }
 ```
@@ -157,6 +170,7 @@ settings file**; restart Tuck after editing by hand):
 | `editor_width`, `editor_height` | Size of the note window; also remembered when you resize it |
 | `font_size` | Editor font size in points |
 | `notes_dir` | Optional. Store notes somewhere else, e.g. a synced folder |
+| `sink_done_tasks` | Move a task below the open ones when it is ticked off |
 | `hotkeys` | Modifiers `Ctrl`, `Alt`, `Shift`, `Win` plus a key. `""` disables a shortcut |
 
 If something misbehaves, `%AppData%\Tuck\tuck.log` is the place to look.
@@ -184,7 +198,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for a tour of the code.
 Ideas that are not done yet — contributions welcome:
 
 - A deck on every monitor (today: the primary monitor)
-- Search across all notes
+- Reminders on a note
+- Pictures and screenshots in notes
 - Drag to reorder notes and to move the deck along the edge
 - Colour emoji (the Windows 10 text control draws them in one colour)
 - winget / Scoop packages

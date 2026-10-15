@@ -27,6 +27,8 @@ const (
 	FontLarger
 	NewNoteKey
 	ToggleDeckKey
+	SearchKey
+	SinkTasks
 	Autostart
 	ChangeFolder
 	OpenFolder
@@ -89,6 +91,31 @@ type State struct {
 	Hover        Control
 	HoverSegment int
 	Pressed      Control
+}
+
+// On reports whether a toggle is switched on.
+func (s State) On(c Control) bool {
+	switch c {
+	case Autostart:
+		return s.Autostart
+	case SinkTasks:
+		return s.Config.SinkDoneTasks
+	}
+	return false
+}
+
+// HotkeyControls are the shortcut fields, in order.
+var HotkeyControls = []Control{NewNoteKey, ToggleDeckKey, SearchKey}
+
+// Hotkey returns the shortcut a hotkey field edits.
+func Hotkey(h *config.Hotkeys, c Control) *string {
+	switch c {
+	case ToggleDeckKey:
+		return &h.ToggleDeck
+	case SearchKey:
+		return &h.Search
+	}
+	return &h.NewNote
 }
 
 // Selected returns the chosen option of a segmented control, or -1 if the
@@ -264,6 +291,7 @@ func NewLayout(scale float64, s State) Layout {
 	section("Shortcuts")
 	l.Items = append(l.Items, Item{Control: NewNoteKey, Kind: KindHotkey, Rect: row("New note", hotkeyW, controlH)})
 	l.Items = append(l.Items, Item{Control: ToggleDeckKey, Kind: KindHotkey, Rect: row("Show or hide the deck", hotkeyW, controlH)})
+	l.Items = append(l.Items, Item{Control: SearchKey, Kind: KindHotkey, Rect: row("Search notes", hotkeyW, controlH)})
 	message := s.Message
 	if message == "" {
 		message = "Click a shortcut, then press the new keys. Backspace turns it off."
@@ -272,6 +300,7 @@ func NewLayout(scale float64, s State) Layout {
 	y += px(messageH)
 
 	section("General")
+	l.Items = append(l.Items, Item{Control: SinkTasks, Kind: KindToggle, Rect: row("Move ticked tasks to the end", toggleW, toggleH)})
 	l.Items = append(l.Items, Item{Control: Autostart, Kind: KindToggle, Rect: row("Start with Windows", toggleW, toggleH)})
 	r = row("Notes folder", 2*buttonW+buttonGap, controlH)
 	l.Items = append(l.Items,

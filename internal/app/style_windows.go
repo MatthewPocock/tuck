@@ -231,20 +231,20 @@ func (e *editorWindow) taskBoxAt(pt win32.POINT) (text string, box int, checked,
 	return text, box, checked, ok
 }
 
-// toggleTask ticks or unticks the task whose box starts at byte box of text.
-// It is an ordinary edit: it can be undone and is saved like typing.
-func (e *editorWindow) toggleTask(text string, box int, checked bool) {
-	mark := "x"
-	if checked {
-		mark = " "
-	}
+// toggleTask ticks or unticks the task whose box starts at byte box of text,
+// moving it within its list if finished tasks are set to sink. It is an
+// ordinary edit: it can be undone and is saved like typing.
+func (e *editorWindow) toggleTask(text string, box int) {
+	edit := markdown.ToggleTask(text, box, e.app.cfg.SinkDoneTasks)
 	pos := utf16Offsets(text)
 	var sel win32.CHARRANGE
 	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
-	inside := win32.CHARRANGE{Min: pos[box+1], Max: pos[box+2]}
-	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&inside)))
+	target := win32.CHARRANGE{Min: pos[edit.Start], Max: pos[edit.End]}
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&target)))
 	const canUndo = 1
-	win32.SendMessage(e.edit, win32.EM_REPLACESEL, canUndo, uintptr(unsafe.Pointer(win32.UTF16(mark))))
+	win32.SendMessage(e.edit, win32.EM_REPLACESEL, canUndo, uintptr(unsafe.Pointer(win32.UTF16(edit.Text))))
+	// Moving lines keeps the length of the text, so the old selection is
+	// still a valid one.
 	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&sel)))
 }
 
@@ -280,9 +280,9 @@ func editProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 		}
 	case win32.WM_LBUTTONDOWN:
 		if wp&win32.MK_SHIFT == 0 {
-			if text, box, checked, ok := e.taskBoxAt(win32.PointFromLParam(lp)); ok {
+			if text, box, _, ok := e.taskBoxAt(win32.PointFromLParam(lp)); ok {
 				win32.SetFocus(hwnd)
-				e.toggleTask(text, box, checked)
+				e.toggleTask(text, box)
 				return 0
 			}
 		}

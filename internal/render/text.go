@@ -42,3 +42,9 @@ const (
 type TextDrawer interface {
 	DrawText(dst *image.RGBA, r image.Rectangle, text string, style TextStyle)
 }
+
+// TextMeasurer is implemented by text drawers that can tell how wide a
+// string is drawn, in pixels. It is used to highlight words within a line.
+type TextMeasurer interface {
+	MeasureText(text string, style TextStyle) float64
+}

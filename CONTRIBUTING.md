@@ -27,8 +27,9 @@ On Windows, plain `go build ./cmd/tuck` and `go test ./...` work too.
 | `internal/hotkey` | Parses shortcuts like `Ctrl+Alt+N` | anywhere |
 | `internal/deck` | Layout, hit testing and animation of the deck — pure geometry | anywhere |
 | `internal/settings` | Layout and hit testing of the settings window | anywhere |
-| `internal/markdown` | Finds the Markdown the editor styles, and task boxes to click | anywhere |
-| `internal/render` | Paints the deck, editor header and icon into images | anywhere |
+| `internal/markdown` | Finds the Markdown the editor styles and task boxes to click; ticks tasks off and strips Markdown for copying | anywhere |
+| `internal/search` | Finds notes by their words; lays out the search window | anywhere |
+| `internal/render` | Paints the deck, editor header, settings and search windows and the icon into images | anywhere |
 | `internal/win32` | Thin typed bindings for the Win32 APIs used | Windows |
 | `internal/app` | Windows, tray icon, hotkeys: wires input to the packages above | Windows |
 

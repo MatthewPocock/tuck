@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -15,6 +16,7 @@ import (
 	"github.com/MatthewPocock/tuck/internal/config"
 	"github.com/MatthewPocock/tuck/internal/deck"
 	"github.com/MatthewPocock/tuck/internal/hotkey"
+	"github.com/MatthewPocock/tuck/internal/markdown"
 	"github.com/MatthewPocock/tuck/internal/note"
 	"github.com/MatthewPocock/tuck/internal/render"
 	"github.com/MatthewPocock/tuck/internal/store"
@@ -28,6 +30,7 @@ const (
 	deckClass       = "TuckDeck"
 	editorClass     = "TuckEditor"
 	settingsClass   = "TuckSettings"
+	searchClass     = "TuckSearch"
 
 	// msgTray carries notification area icon events.
 	msgTray = win32.WM_APP + 1
@@ -36,6 +39,7 @@ const (
 
 	hotkeyNewNote    = 1
 	hotkeyToggleDeck = 2
+	hotkeySearch     = 3
 
 	// busyTimer periodically checks whether a full-screen app is in front,
 	// in which case the deck steps out of the way.
@@ -90,9 +94,11 @@ type App struct {
 	restoring bool
 	// settings is created when first opened.
 	settings *settingsWindow
-	tray     tray
-	text     *gdiText
-	watch    *folderWatch
+	// search is created when first opened.
+	search *searchWindow
+	tray   tray
+	text   *gdiText
+	watch  *folderWatch
 
 	// taskbarCreated is the message Explorer broadcasts when it restarts.
 	taskbarCreated uint32
@@ -203,6 +209,7 @@ func (a *App) createWindows() error {
 		deckClass:       win32.IDC_HAND,
 		editorClass:     win32.IDC_ARROW,
 		settingsClass:   win32.IDC_ARROW,
+		searchClass:     win32.IDC_ARROW,
 	} {
 		if err := registerClass(a.inst, class, cursor); err != nil {
 			return err
@@ -261,6 +268,9 @@ func (a *App) preTranslate(msg *win32.MSG) bool {
 	if msg.Message != win32.WM_KEYDOWN {
 		return false
 	}
+	if s := a.search; s != nil && (msg.HWnd == s.input || msg.HWnd == s.hwnd) {
+		return s.handleKey(msg.WParam)
+	}
 	e := a.editorOf(msg.HWnd)
 	if e == nil {
 		return false
@@ -293,6 +303,7 @@ func (a *App) registerHotkeys() (failures []string) {
 	}{
 		{hotkeyNewNote, "new_note", a.cfg.Hotkeys.NewNote},
 		{hotkeyToggleDeck, "toggle_deck", a.cfg.Hotkeys.ToggleDeck},
+		{hotkeySearch, "search", a.cfg.Hotkeys.Search},
 	}
 	for _, b := range bindings {
 		win32.UnregisterHotKey(a.controller, b.id)
@@ -318,6 +329,7 @@ func (a *App) registerHotkeys() (failures []string) {
 func (a *App) unregisterHotkeys() {
 	win32.UnregisterHotKey(a.controller, hotkeyNewNote)
 	win32.UnregisterHotKey(a.controller, hotkeyToggleDeck)
+	win32.UnregisterHotKey(a.controller, hotkeySearch)
 }
 
 // wndProc handles the controller window's messages.
@@ -345,6 +357,8 @@ func (a *App) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 			a.newNote()
 		case hotkeyToggleDeck:
 			a.toggleDeck()
+		case hotkeySearch:
+			a.showSearch()
 		}
 		return 0
 
@@ -790,9 +804,34 @@ func (a *App) showNoteMenu(id string, at win32.POINT) {
 		m.image(render.ColorDot(dot, c, n.Color == c, a.dark()))
 	}
 	m.separator()
+	if e := a.editorFor(id); e != nil && e.folded {
+		m.item("Unfold", e.focus)
+	} else if e != nil {
+		m.item("Fold to title bar", func() { e.setFolded(true) })
+	}
+	m.item("Copy text", func() { a.copyNote(id, false) })
+	m.item("Copy as plain text", func() { a.copyNote(id, true) })
+	m.separator()
 	m.item("Archive", func() { a.setArchived(id, true) })
 	m.item("Delete\tCtrl+Shift+Backspace", func() { a.deleteNote(id) })
 	a.popup(m, at)
+}
+
+// copyNote puts a note's text on the clipboard: as written, in Markdown, or
+// as plain text with the Markdown syntax removed.
+func (a *App) copyNote(id string, plain bool) {
+	a.flushEditors()
+	n := a.find(id)
+	if n == nil {
+		return
+	}
+	text := n.Body
+	if plain {
+		text = markdown.Plain(text)
+	}
+	if !win32.SetClipboardText(a.controller, strings.ReplaceAll(text, "\n", "\r\n")) {
+		log.Print("copy: the clipboard is in use")
+	}
 }
 
 // showMainMenu shows the app menu, reached from the tray icon or by
@@ -805,6 +844,7 @@ func (a *App) showMainMenu(at win32.POINT) {
 	} else {
 		m.item("Hide deck\t"+a.cfg.Hotkeys.ToggleDeck, a.toggleDeck)
 	}
+	m.item("Search notes…\t"+a.cfg.Hotkeys.Search, a.showSearch)
 	m.separator()
 
 	archived := m.submenu("Archived notes")
