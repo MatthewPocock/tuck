@@ -58,7 +58,7 @@ func addNote(t *testing.T, a *App, body string) *note.Note {
 	t.Helper()
 	n := note.New(time.Now().Add(time.Duration(len(a.notes))*time.Second), note.Sky)
 	n.Body = body
-	if err := a.store.Save(n); err != nil {
+	if _, err := a.store.Save(n); err != nil {
 		t.Fatal(err)
 	}
 	a.notes = append(a.notes, n)

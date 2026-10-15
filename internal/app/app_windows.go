@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/MatthewPocock/tuck/internal/config"
 	"github.com/MatthewPocock/tuck/internal/deck"
 	"github.com/MatthewPocock/tuck/internal/hotkey"
@@ -38,6 +40,14 @@ const (
 	// in which case the deck steps out of the way.
 	busyTimer    = 1
 	busyInterval = 2000 // milliseconds
+
+	// changesTimer picks up changes other programs made to note files. It
+	// runs shortly after the notes folder reports a change, so that a burst
+	// of writes is handled once, or periodically if the folder cannot be
+	// watched.
+	changesTimer    = 2
+	changesDelay    = 300  // milliseconds
+	changesInterval = 5000 // milliseconds
 
 	// screenMargin keeps the editor away from the edges of the work area,
 	// in device-independent pixels.
@@ -74,6 +84,7 @@ type App struct {
 	editor     *editorWindow
 	tray       tray
 	text       *gdiText
+	watch      *folderWatch
 
 	// taskbarCreated is the message Explorer broadcasts when it restarts.
 	taskbarCreated uint32
@@ -126,6 +137,10 @@ func Run(version string) error {
 	a.tray.add(a.controller)
 	a.registerHotkeys()
 	win32.SetTimer(a.controller, busyTimer, busyInterval)
+	a.watch = watchFolder(a.store.Dir())
+	if !a.watch.active() {
+		win32.SetTimer(a.controller, changesTimer, changesInterval)
+	}
 	a.syncDeck()
 	a.deck.show()
 	// A short peek on launch shows the user where the deck lives.
@@ -202,15 +217,31 @@ func (a *App) createWindows() error {
 	return nil
 }
 
-// messageLoop pumps window messages until the app quits.
+// messageLoop pumps window messages until the app quits. Between messages it
+// also waits for the notes folder to change.
 func (a *App) messageLoop() {
 	var msg win32.MSG
-	for win32.GetMessage(&msg) {
-		if a.preTranslate(&msg) {
+	for {
+		var watched windows.Handle
+		if a.watch.active() {
+			watched = a.watch.handle
+		}
+		if win32.WaitForMessageOr(watched) {
+			a.watch.rearm()
+			// Wait for the burst of writes to settle before looking.
+			win32.SetTimer(a.controller, changesTimer, changesDelay)
 			continue
 		}
-		win32.TranslateMessage(&msg)
-		win32.DispatchMessage(&msg)
+		for win32.PeekMessage(&msg) {
+			if msg.Message == win32.WM_QUIT {
+				return
+			}
+			if a.preTranslate(&msg) {
+				continue
+			}
+			win32.TranslateMessage(&msg)
+			win32.DispatchMessage(&msg)
+		}
 	}
 }
 
@@ -226,9 +257,15 @@ func (a *App) preTranslate(msg *win32.MSG) bool {
 	return a.editor.handleKey(msg.WParam)
 }
 
+// quit ends the message loop; shutdown then saves and cleans up.
+func (a *App) quit() {
+	win32.DestroyWindow(a.controller)
+}
+
 func (a *App) shutdown() {
 	a.editor.flush()
 	a.tray.remove()
+	a.watch.close()
 	win32.UnregisterHotKey(a.controller, hotkeyNewNote)
 	win32.UnregisterHotKey(a.controller, hotkeyToggleDeck)
 	a.text.close()
@@ -292,9 +329,15 @@ func (a *App) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 		return 0
 
 	case win32.WM_TIMER:
-		if wp == busyTimer {
+		switch wp {
+		case busyTimer:
 			// Never cover a full-screen game, video or presentation.
 			a.deck.setSuppressed(win32.UserIsBusy() && !a.editor.shown)
+		case changesTimer:
+			if a.watch.active() {
+				win32.KillTimer(hwnd, changesTimer)
+			}
+			a.pickUpChanges()
 		}
 		return 0
 
@@ -385,7 +428,13 @@ func (a *App) updateHold() {
 
 // saveNote writes a note to disk, telling the user if that fails.
 func (a *App) saveNote(n *note.Note) {
-	err := a.store.Save(n)
+	conflict, err := a.store.Save(n)
+	if conflict != "" {
+		// The note was also changed elsewhere. That version now lives on as
+		// a note of its own; bring it into the deck.
+		log.Printf("save: %s was changed elsewhere; kept that version as %q", n.ID, conflict)
+		win32.SetTimer(a.controller, changesTimer, 0)
+	}
 	if err == nil {
 		a.saveFailed = false
 		return
@@ -477,6 +526,51 @@ func (a *App) editorRect(id string, scale float64) win32.RECT {
 	x = max(work.Left+margin, min(x, work.Right-margin-w))
 	y := max(work.Top+margin, min(anchor.Top, work.Bottom-margin-h))
 	return win32.RECT{Left: x, Top: y, Right: x + w, Bottom: y + h}
+}
+
+// pickUpChanges brings in notes that other programs added, changed or
+// deleted, for example a sync client delivering edits from another computer.
+func (a *App) pickUpChanges() {
+	// Pending edits are saved first. Should the open note have changed on
+	// disk too, the save keeps the other version as a separate note, which
+	// the scan below then picks up: neither side's words are lost.
+	a.editor.flush()
+
+	changes, err := a.store.Changes()
+	if err != nil {
+		log.Printf("changes: %v", err)
+	}
+	if len(changes) == 0 {
+		return
+	}
+	for _, c := range changes {
+		current := a.find(c.ID)
+		switch {
+		case c.Note == nil:
+			// Deleted elsewhere.
+			if current == nil {
+				continue
+			}
+			if a.editor.showing(c.ID) {
+				a.editor.hide()
+			}
+			a.forget(current)
+		case current == nil:
+			a.notes = append(a.notes, c.Note)
+		default:
+			// Update in place: the editor and the deck hold this pointer.
+			*current = *c.Note
+			if a.editor.showing(c.ID) {
+				if current.Archived {
+					a.editor.hide()
+				} else {
+					a.editor.reload()
+				}
+			}
+		}
+	}
+	slices.SortStableFunc(a.notes, func(x, y *note.Note) int { return x.Created.Compare(y.Created) })
+	a.syncDeck()
 }
 
 // noteClosed runs after the editor lets go of a note. Notes that were never
@@ -622,6 +716,7 @@ func (a *App) setTheme(t config.Theme) {
 func (a *App) popup(m *menu, at win32.POINT) {
 	a.menuOpen = true
 	a.menuHoldsDeck = a.deck.model.Open()
+	win32.SetDarkMenus(a.dark())
 	a.updateHold()
 	// A popup menu only closes on an outside click if its owner is the
 	// foreground window.
@@ -644,8 +739,10 @@ func (a *App) showNoteMenu(id string, at win32.POINT) {
 	m := newMenu()
 	m.item("Open", func() { a.openNote(id) })
 	m.separator()
+	dot := int(win32.GetSystemMetrics(win32.SM_CXSMICON))
 	for _, c := range note.Colors {
-		m.check(c.Label(), n.Color == c, func() { a.setColor(id, c) })
+		m.item(c.Label(), func() { a.setColor(id, c) })
+		m.image(render.ColorDot(dot, c, n.Color == c, a.dark()))
 	}
 	m.separator()
 	m.item("Archive", func() { a.setArchived(id, true) })
@@ -716,7 +813,7 @@ func (a *App) showMainMenu(at win32.POINT) {
 	m.item("Edit settings file", func() { win32.ShellOpen(a.paths.config) })
 	m.separator()
 	m.disabled(appName + " " + a.version)
-	m.item("Quit", func() { win32.DestroyWindow(a.controller) })
+	m.item("Quit", a.quit)
 	a.popup(m, at)
 }
 

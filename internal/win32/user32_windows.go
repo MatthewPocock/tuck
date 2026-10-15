@@ -43,6 +43,8 @@ var (
 	procMonitorFromPoint              = user32.NewProc("MonitorFromPoint")
 	procMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
 	procMoveWindow                    = user32.NewProc("MoveWindow")
+	procMsgWaitForMultipleObjectsEx   = user32.NewProc("MsgWaitForMultipleObjectsEx")
+	procPeekMessageW                  = user32.NewProc("PeekMessageW")
 	procPostMessageW                  = user32.NewProc("PostMessageW")
 	procPostQuitMessage               = user32.NewProc("PostQuitMessage")
 	procRegisterClassExW              = user32.NewProc("RegisterClassExW")
@@ -51,6 +53,7 @@ var (
 	procReleaseDC                     = user32.NewProc("ReleaseDC")
 	procSendMessageW                  = user32.NewProc("SendMessageW")
 	procSetFocus                      = user32.NewProc("SetFocus")
+	procSetMenuItemInfoW              = user32.NewProc("SetMenuItemInfoW")
 	procSetForegroundWindow           = user32.NewProc("SetForegroundWindow")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procSetTimer                      = user32.NewProc("SetTimer")
@@ -145,6 +148,32 @@ func IsWindowVisible(hwnd HWND) bool {
 func GetMessage(msg *MSG) bool {
 	r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(msg)), 0, 0, 0)
 	return int32(r) > 0
+}
+
+// PeekMessage removes the next message for the calling thread from its
+// queue, if there is one.
+func PeekMessage(msg *MSG) bool {
+	const remove = 0x0001 // PM_REMOVE
+	r, _, _ := procPeekMessageW.Call(uintptr(unsafe.Pointer(msg)), 0, 0, 0, remove)
+	return r != 0
+}
+
+// WaitForMessageOr blocks until a message arrives for the calling thread or
+// the handle, if non-zero, is signalled. It reports whether the handle was.
+func WaitForMessageOr(h windows.Handle) bool {
+	const (
+		infinite         = 0xFFFFFFFF
+		qsAllInput       = 0x04FF
+		inputAvailable   = 0x0004 // MWMO_INPUTAVAILABLE
+		waitObject0      = 0
+		waitedForObjects = 1
+	)
+	var count, handles uintptr
+	if h != 0 {
+		count, handles = waitedForObjects, uintptr(unsafe.Pointer(&h))
+	}
+	r, _, _ := procMsgWaitForMultipleObjectsEx.Call(count, handles, infinite, qsAllInput, inputAvailable)
+	return h != 0 && r == waitObject0
 }
 
 func TranslateMessage(msg *MSG) {
@@ -341,6 +370,15 @@ func AppendMenu(menu HMENU, flags uint32, id uintptr, text string) {
 		p = UTF16(text)
 	}
 	procAppendMenuW.Call(uintptr(menu), uintptr(flags), id, uintptr(unsafe.Pointer(p)))
+}
+
+// SetMenuItemBitmap shows a bitmap beside a menu item, identified by its
+// command ID. A 32-bit bitmap with premultiplied alpha is drawn blended. The
+// menu does not take ownership of the bitmap.
+func SetMenuItemBitmap(menu HMENU, id uintptr, bmp HBITMAP) {
+	info := MENUITEMINFO{Mask: MIIM_BITMAP, BitmapItem: bmp}
+	info.Size = uint32(unsafe.Sizeof(info))
+	procSetMenuItemInfoW.Call(uintptr(menu), id, 0, uintptr(unsafe.Pointer(&info)))
 }
 
 // TrackPopupMenu shows a popup menu at a screen position and returns the ID

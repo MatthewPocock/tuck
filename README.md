@@ -9,9 +9,9 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
 
 ![The deck at rest, fanning out, fully open and with a note selected](docs/deck.png)
 
-> **Status: early.** Tuck is developed on macOS and has so far been exercised
-> through its test suite and under Wine, not yet day-to-day on real Windows
-> hardware. Expect rough edges, and please [report them](../../issues).
+> **Status: early.** Tuck has been tested on real Windows 10 hardware (4K,
+> 125% scaling) as well as through its test suite and under Wine, but not yet
+> used day-to-day. Expect rough edges, and please [report them](../../issues).
 
 ## Features
 

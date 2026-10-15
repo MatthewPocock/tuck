@@ -42,6 +42,9 @@ const (
 	dashWidth  = 6.0
 	dashHeight = 4.0
 	dashGap    = 4.0
+	// maxDashes caps the resting pill so a large deck stays a slim handle;
+	// notes beyond the cap share the last dash.
+	maxDashes  = 12
 	hotPad     = 6.0 // how far the hover target extends beyond the pill
 	hoverSlack = 12.0
 )
@@ -150,6 +153,10 @@ type Deck struct {
 
 	pointerX, pointerY float64
 	pointerIn          bool
+
+	// stale is set when something changed that the next Advance must report
+	// even though no animation is running, such as which tab is active.
+	stale bool
 }
 
 // New returns a collapsed, empty deck on the given edge.
@@ -200,6 +207,9 @@ func (d *Deck) SetMaxHeight(px int) {
 // SetActive marks the note that is open in the editor, or none if id is
 // empty, and scrolls it into view.
 func (d *Deck) SetActive(id string) {
+	if id != d.active {
+		d.stale = true
+	}
 	d.active = id
 	for i, it := range d.items {
 		if it.ID == id {
@@ -256,7 +266,8 @@ func (d *Deck) Size() (width, height int) {
 // visible changed, in which case the host should repaint.
 func (d *Deck) Advance(dt time.Duration) bool {
 	sec := clamp(dt.Seconds(), 0, 0.1)
-	changed := false
+	changed := d.stale
+	d.stale = false
 
 	wasOpen := d.open
 	d.updateOpen(sec)
@@ -336,7 +347,7 @@ func (d *Deck) touches(x, y float64) bool {
 // Idle reports whether the deck is fully collapsed with no animation in
 // flight, meaning the host can stop its animation timer.
 func (d *Deck) Idle() bool {
-	if d.open || d.held || d.clock > 0 {
+	if d.open || d.held || d.clock > 0 || d.stale {
 		return false
 	}
 	for _, l := range d.lift {
@@ -461,7 +472,7 @@ func (d *Deck) contentHeight() float64 {
 // restHeight is the height of the dashes shown at rest. An empty deck still
 // reserves room for one dash so the pill has something to show.
 func (d *Deck) restHeight() float64 {
-	n := float64(max(len(d.items), 1))
+	n := float64(min(max(len(d.items), 1), maxDashes))
 	return (n*dashHeight + (n-1)*dashGap) * d.scale
 }
 
@@ -509,7 +520,7 @@ func (d *Deck) restRect(i int) Rect {
 	top := (float64(h) - d.restHeight()) / 2
 	return Rect{
 		X: float64(w) - (pillInset+(pillWidth+dashWidth)/2)*s,
-		Y: top + float64(i)*(dashHeight+dashGap)*s,
+		Y: top + float64(min(i, maxDashes-1))*(dashHeight+dashGap)*s,
 		W: dashWidth * s,
 		H: dashHeight * s,
 	}

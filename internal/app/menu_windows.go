@@ -1,6 +1,10 @@
 package app
 
-import "github.com/MatthewPocock/tuck/internal/win32"
+import (
+	"image"
+
+	"github.com/MatthewPocock/tuck/internal/win32"
+)
 
 // menu builds a native popup menu whose items run Go callbacks.
 //
@@ -11,6 +15,8 @@ type menu struct {
 	handle  win32.HMENU
 	root    *menu
 	actions []func() // owned by the root; an item's ID is its index + 1
+	// bitmaps are owned by the root and freed once the menu is dismissed.
+	bitmaps []win32.HBITMAP
 }
 
 func newMenu() *menu {
@@ -31,6 +37,19 @@ func (m *menu) check(label string, checked bool, action func()) {
 		flags = win32.MF_CHECKED
 	}
 	m.add(label, flags, action)
+}
+
+// image shows a picture beside the most recently added item.
+func (m *menu) image(img *image.RGBA) {
+	b := img.Bounds()
+	dib, err := win32.NewDIB(b.Dx(), b.Dy())
+	if err != nil {
+		return
+	}
+	dib.CopyFrom(img)
+	bmp := dib.Detach()
+	m.root.bitmaps = append(m.root.bitmaps, bmp)
+	win32.SetMenuItemBitmap(m.handle, uintptr(len(m.root.actions)), bmp)
 }
 
 // disabled adds a greyed-out, non-interactive entry.
@@ -60,6 +79,9 @@ func (m *menu) submenu(label string) *menu {
 func (m *menu) show(owner win32.HWND, at win32.POINT) {
 	id := win32.TrackPopupMenu(m.handle, win32.TPM_RETURNCMD|win32.TPM_NONOTIFY|win32.TPM_RIGHTBUTTON, at.X, at.Y, owner)
 	win32.DestroyMenu(m.handle)
+	for _, bmp := range m.bitmaps {
+		win32.DeleteObject(win32.HGDIOBJ(bmp))
+	}
 	// Windows only dismisses a popup menu on an outside click if a message
 	// follows it; this is the documented workaround.
 	win32.PostMessage(owner, win32.WM_NULL, 0, 0)

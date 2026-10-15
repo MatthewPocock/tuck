@@ -61,6 +61,11 @@ type editorWindow struct {
 	font  win32.HFONT
 	paper win32.HBRUSH
 	sw    render.Swatch
+	// border outlines the window where Desktop Window Manager does not.
+	border win32.HBRUSH
+	// drawBorder is true before Windows 11, which neither rounds the window
+	// nor colours its border.
+	drawBorder bool
 
 	header  *render.Canvas
 	dib     *win32.DIB
@@ -84,6 +89,11 @@ func newEditorWindow(a *App) (*editorWindow, error) {
 	}
 	e.hwnd = hwnd
 	win32.DwmSetWindowAttribute(hwnd, win32.DWMWA_WINDOW_CORNER_PREFERENCE, win32.DWMWCP_ROUND)
+	// Windows 10 drops the shadow of a window without a frame unless the
+	// frame reaches into the client area. One pixel at the top is enough, and
+	// the header covers it with opaque pixels.
+	win32.DwmExtendFrameIntoClientArea(hwnd, win32.MARGINS{Top: 1})
+	e.drawBorder = !win32.IsWindows11()
 
 	if err := e.createEdit(); err != nil {
 		return nil, err
@@ -167,6 +177,19 @@ func (e *editorWindow) hide() {
 	}
 }
 
+// reload shows the open note's text again after it changed on disk, keeping
+// the caret and selection where they were as far as possible.
+func (e *editorWindow) reload() {
+	if e.note == nil {
+		return
+	}
+	var sel win32.CHARRANGE
+	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+	e.applyTheme()
+	e.setText(e.note.Body)
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+}
+
 // showing reports whether the editor is open on the given note.
 func (e *editorWindow) showing(id string) bool {
 	return e.shown && e.note != nil && e.note.ID == id
@@ -230,6 +253,10 @@ func (e *editorWindow) applyTheme() {
 		win32.DeleteObject(win32.HGDIOBJ(e.paper))
 	}
 	e.paper = win32.CreateSolidBrush(colorRef(e.sw.Paper))
+	if e.border != 0 {
+		win32.DeleteObject(win32.HGDIOBJ(e.border))
+	}
+	e.border = win32.CreateSolidBrush(colorRef(e.sw.Border))
 
 	win32.DwmSetWindowAttribute(e.hwnd, win32.DWMWA_BORDER_COLOR, uint32(colorRef(e.sw.Border)))
 	var darkFlag uint32
@@ -318,6 +345,20 @@ func (e *editorWindow) paint() {
 
 	body := win32.RECT{Top: int32(h), Right: client.Right, Bottom: client.Bottom}
 	win32.FillRect(dc, &body, e.paper)
+
+	if e.drawBorder {
+		// The text control is inset from every edge, so a hairline drawn
+		// here is never covered.
+		t := max(1, e.px(1))
+		for _, r := range []win32.RECT{
+			{Right: client.Right, Bottom: t},
+			{Top: client.Bottom - t, Right: client.Right, Bottom: client.Bottom},
+			{Bottom: client.Bottom, Right: t},
+			{Left: client.Right - t, Right: client.Right, Bottom: client.Bottom},
+		} {
+			win32.FillRect(dc, &r, e.border)
+		}
+	}
 }
 
 func (e *editorWindow) invalidateHeader() {
@@ -614,6 +655,9 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 		}
 		if e.paper != 0 {
 			win32.DeleteObject(win32.HGDIOBJ(e.paper))
+		}
+		if e.border != 0 {
+			win32.DeleteObject(win32.HGDIOBJ(e.border))
 		}
 		return 0
 	}

@@ -18,6 +18,7 @@ var (
 	procSHQueryUserNotifState = shell32.NewProc("SHQueryUserNotificationState")
 	procGetDpiForMonitor      = shcore.NewProc("GetDpiForMonitor")
 	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+	procDwmExtendFrame        = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 	procSetWindowTheme        = uxtheme.NewProc("SetWindowTheme")
 	procGetModuleHandleW      = kernel32.NewProc("GetModuleHandleW")
 )
@@ -53,6 +54,21 @@ func DwmSetWindowAttribute(hwnd HWND, attr uint32, value uint32) bool {
 	hr, _, _ := procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(attr),
 		uintptr(unsafe.Pointer(&value)), unsafe.Sizeof(value))
 	return int32(hr) >= 0
+}
+
+// DwmExtendFrameIntoClientArea extends the window frame, and with it the
+// drop shadow Desktop Window Manager draws, into the client area.
+func DwmExtendFrameIntoClientArea(hwnd HWND, m MARGINS) {
+	if procDwmExtendFrame.Find() != nil {
+		return
+	}
+	procDwmExtendFrame.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&m)))
+}
+
+// IsWindows11 reports whether the system is Windows 11 or later, where
+// Desktop Window Manager rounds window corners and draws coloured borders.
+func IsWindows11() bool {
+	return windows.RtlGetVersion().BuildNumber >= 22000
 }
 
 // SetWindowTheme applies a visual style, such as "DarkMode_Explorer", to a

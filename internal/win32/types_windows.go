@@ -34,6 +34,27 @@ type SIZE struct {
 	CX, CY int32
 }
 
+// MENUITEMINFO is the Win32 MENUITEMINFOW structure.
+type MENUITEMINFO struct {
+	Size            uint32
+	Mask            uint32
+	Type            uint32
+	State           uint32
+	ID              uint32
+	SubMenu         HMENU
+	BitmapChecked   HBITMAP
+	BitmapUnchecked HBITMAP
+	ItemData        uintptr
+	TypeData        *uint16
+	Cch             uint32
+	BitmapItem      HBITMAP
+}
+
+// MARGINS is the Win32 MARGINS structure.
+type MARGINS struct {
+	Left, Right, Top, Bottom int32
+}
+
 // RECT is a rectangle in pixels; Right and Bottom are exclusive.
 type RECT struct {
 	Left, Top, Right, Bottom int32

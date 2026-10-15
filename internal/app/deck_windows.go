@@ -310,6 +310,14 @@ func (d *deckWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintpt
 		}
 		return 0
 
+	case win32.WM_CLOSE:
+		// The deck is the app's only visible window, so this is where a
+		// polite request to close the app arrives (taskkill, installers,
+		// Restart Manager). Letting the default handler destroy just the
+		// deck would leave an invisible process that blocks relaunching.
+		d.app.quit()
+		return 0
+
 	case win32.WM_DESTROY:
 		d.stopTicking()
 		d.dib.Close()
