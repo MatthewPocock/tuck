@@ -1,0 +1,210 @@
+package win32
+
+// Window messages.
+const (
+	WM_NULL            = 0x0000
+	WM_DESTROY         = 0x0002
+	WM_SIZE            = 0x0005
+	WM_ACTIVATE        = 0x0006
+	WM_SETFOCUS        = 0x0007
+	WM_SETTEXT         = 0x000C
+	WM_GETTEXT         = 0x000D
+	WM_GETTEXTLENGTH   = 0x000E
+	WM_PAINT           = 0x000F
+	WM_CLOSE           = 0x0010
+	WM_ERASEBKGND      = 0x0014
+	WM_ENDSESSION      = 0x0016
+	WM_SETTINGCHANGE   = 0x001A
+	WM_MOUSEACTIVATE   = 0x0021
+	WM_GETMINMAXINFO   = 0x0024
+	WM_SETFONT         = 0x0030
+	WM_DISPLAYCHANGE   = 0x007E
+	WM_NCCALCSIZE      = 0x0083
+	WM_NCHITTEST       = 0x0084
+	WM_NCACTIVATE      = 0x0086
+	WM_KEYDOWN         = 0x0100
+	WM_SYSKEYDOWN      = 0x0104
+	WM_COMMAND         = 0x0111
+	WM_TIMER           = 0x0113
+	WM_CTLCOLOREDIT    = 0x0133
+	WM_MOUSEMOVE       = 0x0200
+	WM_LBUTTONDOWN     = 0x0201
+	WM_LBUTTONUP       = 0x0202
+	WM_LBUTTONDBLCLK   = 0x0203
+	WM_RBUTTONUP       = 0x0205
+	WM_MOUSEWHEEL      = 0x020A
+	WM_ENTERSIZEMOVE   = 0x0231
+	WM_EXITSIZEMOVE    = 0x0232
+	WM_MOUSELEAVE      = 0x02A3
+	WM_DPICHANGED      = 0x02E0
+	WM_HOTKEY          = 0x0312
+	WM_CONTEXTMENU     = 0x007B
+	WM_USER            = 0x0400
+	WM_APP             = 0x8000
+	WA_INACTIVE        = 0
+	MA_NOACTIVATE      = 3
+	EN_CHANGE          = 0x0300
+	WHEEL_DELTA        = 120
+	SPI_SETWORKAREA    = 0x002F
+	USER_DEFAULT_DPI   = 96
+	CW_USEDEFAULT      = ^0x7FFFFFFF
+	IDC_ARROW          = 32512
+	IDC_HAND           = 32649
+	SM_CXSMICON        = 49
+	CS_HREDRAW         = 0x0002
+	CS_VREDRAW         = 0x0001
+	TME_LEAVE          = 0x0002
+	MB_OK              = 0x0000
+	MB_ICONERROR       = 0x0010
+	MB_ICONINFORMATION = 0x0040
+)
+
+// Window styles.
+const (
+	WS_POPUP        = 0x80000000
+	WS_CHILD        = 0x40000000
+	WS_VISIBLE      = 0x10000000
+	WS_CLIPCHILDREN = 0x02000000
+	WS_VSCROLL      = 0x00200000
+	WS_THICKFRAME   = 0x00040000
+
+	WS_EX_TOPMOST    = 0x00000008
+	WS_EX_TOOLWINDOW = 0x00000080
+	WS_EX_LAYERED    = 0x00080000
+	WS_EX_NOACTIVATE = 0x08000000
+
+	ES_MULTILINE   = 0x0004
+	ES_AUTOVSCROLL = 0x0040
+	ES_NOHIDESEL   = 0x0100
+	ES_WANTRETURN  = 0x1000
+)
+
+// ShowWindow commands.
+const (
+	SW_HIDE           = 0
+	SW_SHOWNOACTIVATE = 4
+	SW_SHOW           = 5
+)
+
+// SetWindowPos flags and insert-after handles.
+const (
+	SWP_NOSIZE     = 0x0001
+	SWP_NOMOVE     = 0x0002
+	SWP_NOZORDER   = 0x0004
+	SWP_NOACTIVATE = 0x0010
+
+	HWND_TOPMOST HWND = ^HWND(0) // (HWND)-1
+)
+
+// WM_NCHITTEST results.
+const (
+	HTCLIENT      = 1
+	HTCAPTION     = 2
+	HTLEFT        = 10
+	HTRIGHT       = 11
+	HTTOP         = 12
+	HTTOPLEFT     = 13
+	HTTOPRIGHT    = 14
+	HTBOTTOM      = 15
+	HTBOTTOMLEFT  = 16
+	HTBOTTOMRIGHT = 17
+)
+
+// Virtual-key codes.
+const (
+	VK_BACK       = 0x08
+	VK_SHIFT      = 0x10
+	VK_CONTROL    = 0x11
+	VK_MENU       = 0x12
+	VK_ESCAPE     = 0x1B
+	VK_PRIOR      = 0x21
+	VK_NEXT       = 0x22
+	VK_OEM_PERIOD = 0xBE
+)
+
+// Layered windows and GDI.
+const (
+	ULW_ALPHA      = 0x00000002
+	AC_SRC_OVER    = 0x00
+	AC_SRC_ALPHA   = 0x01
+	BI_RGB         = 0
+	DIB_RGB_COLORS = 0
+	SRCCOPY        = 0x00CC0020
+	TRANSPARENT    = 1
+
+	DEFAULT_CHARSET     = 1
+	ANTIALIASED_QUALITY = 4
+	CLEARTYPE_QUALITY   = 5
+	FW_NORMAL           = 400
+	FW_SEMIBOLD         = 600
+
+	DT_LEFT         = 0x0000
+	DT_VCENTER      = 0x0004
+	DT_SINGLELINE   = 0x0020
+	DT_NOPREFIX     = 0x0800
+	DT_END_ELLIPSIS = 0x8000
+)
+
+// Monitors.
+const (
+	MONITOR_DEFAULTTOPRIMARY = 1
+	MONITOR_DEFAULTTONEAREST = 2
+)
+
+// Menus.
+const (
+	MF_STRING    = 0x0000
+	MF_GRAYED    = 0x0001
+	MF_CHECKED   = 0x0008
+	MF_POPUP     = 0x0010
+	MF_SEPARATOR = 0x0800
+
+	TPM_RIGHTBUTTON = 0x0002
+	TPM_NONOTIFY    = 0x0080
+	TPM_RETURNCMD   = 0x0100
+)
+
+// Notification area icons.
+const (
+	NIM_ADD    = 0
+	NIM_MODIFY = 1
+	NIM_DELETE = 2
+
+	NIF_MESSAGE = 0x01
+	NIF_ICON    = 0x02
+	NIF_TIP     = 0x04
+)
+
+// Rich edit control messages and flags.
+const (
+	EM_SETSEL        = 0x00B1
+	EM_REPLACESEL    = 0x00C2
+	EM_SETMARGINS    = 0x00D3
+	EM_EXGETSEL      = WM_USER + 52
+	EM_EXLIMITTEXT   = WM_USER + 53
+	EM_EXSETSEL      = WM_USER + 55
+	EM_GETSELTEXT    = WM_USER + 62
+	EM_SETBKGNDCOLOR = WM_USER + 67
+	EM_SETCHARFORMAT = WM_USER + 68
+	EM_SETEVENTMASK  = WM_USER + 69
+	EM_SETTEXTMODE   = WM_USER + 89
+
+	TM_PLAINTEXT   = 1
+	ENM_CHANGE     = 0x00000001
+	SCF_ALL        = 0x0004
+	CFM_COLOR      = 0x40000000
+	EC_LEFTMARGIN  = 0x0001
+	EC_RIGHTMARGIN = 0x0002
+)
+
+// Desktop Window Manager attributes.
+const (
+	DWMWA_USE_IMMERSIVE_DARK_MODE  = 20
+	DWMWA_WINDOW_CORNER_PREFERENCE = 33
+	DWMWA_BORDER_COLOR             = 34
+	DWMWCP_ROUND                   = 2
+)
+
+// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is passed to
+// SetProcessDpiAwarenessContext; it is the handle value (DPI_AWARENESS_CONTEXT)-4.
+const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ^uintptr(3)

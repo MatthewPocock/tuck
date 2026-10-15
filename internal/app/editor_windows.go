@@ -1,0 +1,621 @@
+package app
+
+import (
+	"image/color"
+	"log"
+	"math"
+	"strings"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+
+	"github.com/MatthewPocock/tuck/internal/config"
+	"github.com/MatthewPocock/tuck/internal/note"
+	"github.com/MatthewPocock/tuck/internal/render"
+	"github.com/MatthewPocock/tuck/internal/win32"
+)
+
+const (
+	saveTimer = 1
+	// saveDelay is how long typing must pause before the note is written
+	// to disk.
+	saveDelay = 400 // milliseconds
+	// maxNoteChars caps the size of a note; the rich edit default of 32K
+	// characters is too small for long-running notes.
+	maxNoteChars = 4 << 20
+)
+
+// Editor layout in device-independent pixels.
+const (
+	editorPadLeft   = 16
+	editorPadRight  = 4
+	editorPadBottom = 12
+	// resizeBorder is the width of the invisible band along the window's
+	// edges that resizes it.
+	resizeBorder = 6
+	// editorGap is the space between the editor and the deck.
+	editorGap = 10
+)
+
+// editorWindow is the borderless window in which one note at a time is
+// edited. Its header is drawn by the render package; the text area is a
+// native edit control, which provides IME support, undo, accessibility and
+// every text-editing shortcut users expect.
+type editorWindow struct {
+	app  *App
+	hwnd win32.HWND
+	edit win32.HWND
+	// rich reports whether edit is a rich edit control. If that DLL is
+	// unavailable the editor falls back to a classic EDIT control.
+	rich bool
+
+	note   *note.Note
+	shown  bool
+	pinned bool
+	// loading suppresses change notifications while text is set from code.
+	loading bool
+	dirty   bool
+
+	scale float64
+	font  win32.HFONT
+	paper win32.HBRUSH
+	sw    render.Swatch
+
+	header  *render.Canvas
+	dib     *win32.DIB
+	hover   render.HeaderButton
+	pressed render.HeaderButton
+	// tracking is true while a WM_MOUSELEAVE notification is pending.
+	tracking bool
+	// moveStart is the window rectangle when a drag or resize began.
+	moveStart win32.RECT
+}
+
+func newEditorWindow(a *App) (*editorWindow, error) {
+	e := &editorWindow{app: a, scale: 1, header: render.NewCanvas(1, 1)}
+
+	hwnd, err := createWindow(e, a.inst,
+		win32.WS_EX_TOOLWINDOW|win32.WS_EX_TOPMOST,
+		editorClass, appName,
+		win32.WS_POPUP|win32.WS_THICKFRAME|win32.WS_CLIPCHILDREN)
+	if err != nil {
+		return nil, err
+	}
+	e.hwnd = hwnd
+	win32.DwmSetWindowAttribute(hwnd, win32.DWMWA_WINDOW_CORNER_PREFERENCE, win32.DWMWCP_ROUND)
+
+	if err := e.createEdit(); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// createEdit creates the text control, preferring the modern rich edit.
+func (e *editorWindow) createEdit() error {
+	const style = win32.WS_CHILD | win32.WS_VISIBLE | win32.WS_VSCROLL |
+		win32.ES_MULTILINE | win32.ES_AUTOVSCROLL | win32.ES_WANTRETURN | win32.ES_NOHIDESEL
+
+	// Loading the DLL registers the RICHEDIT50W window class.
+	if _, err := windows.LoadLibrary("Msftedit.dll"); err == nil {
+		if h, err := win32.CreateWindowEx(0, "RICHEDIT50W", "", style, 0, 0, 0, 0, e.hwnd, 0, e.app.inst); err == nil {
+			e.edit, e.rich = h, true
+			win32.SendMessage(h, win32.EM_SETTEXTMODE, win32.TM_PLAINTEXT, 0)
+			win32.SendMessage(h, win32.EM_EXLIMITTEXT, 0, maxNoteChars)
+			win32.SendMessage(h, win32.EM_SETEVENTMASK, 0, win32.ENM_CHANGE)
+			return nil
+		}
+	}
+
+	log.Print("editor: rich edit unavailable, falling back to a plain edit control")
+	h, err := win32.CreateWindowEx(0, "EDIT", "", style, 0, 0, 0, 0, e.hwnd, 0, e.app.inst)
+	if err != nil {
+		return err
+	}
+	e.edit = h
+	return nil
+}
+
+// open shows a note in the editor at the given screen rectangle. If the
+// editor is pinned and already visible it stays where the user put it.
+func (e *editorWindow) open(n *note.Note, at win32.RECT, scale float64) {
+	previous := e.note
+	if previous != nil && previous != n {
+		e.flush()
+	}
+
+	e.note = n
+	e.setScale(scale)
+	e.applyTheme()
+	e.setText(n.Body)
+
+	if !(e.shown && e.pinned) {
+		win32.SetWindowPos(e.hwnd, win32.HWND_TOPMOST, at.Left, at.Top, at.Width(), at.Height(), win32.SWP_NOACTIVATE)
+	}
+	e.layout()
+
+	e.shown = true
+	win32.ShowWindow(e.hwnd, win32.SW_SHOW)
+	win32.SetForegroundWindow(e.hwnd)
+	win32.SetFocus(e.edit)
+	// Put the caret at the end, ready to continue the note.
+	end := win32.SendMessage(e.edit, win32.WM_GETTEXTLENGTH, 0, 0)
+	win32.SendMessage(e.edit, win32.EM_SETSEL, end, end)
+
+	if previous != nil && previous != n {
+		e.app.noteClosed(previous)
+	}
+}
+
+// hide saves and closes the editor.
+func (e *editorWindow) hide() {
+	if !e.shown {
+		return
+	}
+	// Clear shown first: hiding the window deactivates it, which would
+	// otherwise re-enter hide.
+	e.shown = false
+	e.flush()
+	win32.ShowWindow(e.hwnd, win32.SW_HIDE)
+
+	n := e.note
+	e.note = nil
+	e.pinned = false
+	e.hover, e.pressed = render.ButtonNone, render.ButtonNone
+	if n != nil {
+		e.app.noteClosed(n)
+	}
+}
+
+// showing reports whether the editor is open on the given note.
+func (e *editorWindow) showing(id string) bool {
+	return e.shown && e.note != nil && e.note.ID == id
+}
+
+// flush writes any pending edits to disk immediately.
+func (e *editorWindow) flush() {
+	win32.KillTimer(e.hwnd, saveTimer)
+	if !e.dirty || e.note == nil {
+		return
+	}
+	e.dirty = false
+	e.note.Body = e.text()
+	e.note.Updated = time.Now().UTC().Truncate(time.Second)
+	e.app.saveNote(e.note)
+}
+
+// text returns the edit control's content with "\n" line endings.
+func (e *editorWindow) text() string {
+	s := win32.WindowText(e.edit)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+// setText replaces the edit control's content without marking it dirty.
+func (e *editorWindow) setText(body string) {
+	e.loading = true
+	win32.SetWindowText(e.edit, strings.ReplaceAll(body, "\n", "\r\n"))
+	e.applyTextColor()
+	e.loading = false
+	e.dirty = false
+}
+
+// setScale adapts fonts and metrics to the display scale factor.
+func (e *editorWindow) setScale(scale float64) {
+	if scale == e.scale && e.font != 0 {
+		return
+	}
+	e.scale = scale
+	if e.font != 0 {
+		win32.DeleteObject(win32.HGDIOBJ(e.font))
+	}
+	// Points are 1/72 inch and a scale of 1 is 96 pixels per inch.
+	px := float64(e.app.cfg.FontSize) * 96 / 72 * scale
+	e.font = win32.CreateFont(int32(math.Round(px)), win32.FW_NORMAL, win32.CLEARTYPE_QUALITY, uiFont)
+	e.loading = true
+	win32.SendMessage(e.edit, win32.WM_SETFONT, uintptr(e.font), 1)
+	e.applyTextColor()
+	e.loading = false
+}
+
+// applyTheme recolours the window for the current note and theme.
+func (e *editorWindow) applyTheme() {
+	if e.note == nil {
+		return
+	}
+	dark := e.app.dark()
+	e.sw = render.Palette(e.note.Color, dark)
+
+	if e.paper != 0 {
+		win32.DeleteObject(win32.HGDIOBJ(e.paper))
+	}
+	e.paper = win32.CreateSolidBrush(colorRef(e.sw.Paper))
+
+	win32.DwmSetWindowAttribute(e.hwnd, win32.DWMWA_BORDER_COLOR, uint32(colorRef(e.sw.Border)))
+	var darkFlag uint32
+	theme := "Explorer"
+	if dark {
+		darkFlag, theme = 1, "DarkMode_Explorer"
+	}
+	win32.DwmSetWindowAttribute(e.hwnd, win32.DWMWA_USE_IMMERSIVE_DARK_MODE, darkFlag)
+	// Gives the scroll bar a matching light or dark appearance.
+	win32.SetWindowTheme(e.edit, theme)
+
+	if e.rich {
+		win32.SendMessage(e.edit, win32.EM_SETBKGNDCOLOR, 0, uintptr(colorRef(e.sw.Paper)))
+	}
+	e.loading = true
+	e.applyTextColor()
+	e.loading = false
+
+	win32.InvalidateRect(e.hwnd, nil)
+	win32.InvalidateRect(e.edit, nil)
+}
+
+// applyTextColor sets the text colour of a rich edit control. A classic EDIT
+// control is coloured through WM_CTLCOLOREDIT instead.
+func (e *editorWindow) applyTextColor() {
+	if !e.rich {
+		return
+	}
+	format := win32.CHARFORMAT{Mask: win32.CFM_COLOR, TextColor: colorRef(e.sw.Text)}
+	format.Size = uint32(unsafe.Sizeof(format))
+	win32.SendMessage(e.edit, win32.EM_SETCHARFORMAT, win32.SCF_ALL, uintptr(unsafe.Pointer(&format)))
+}
+
+// colorRef converts an opaque colour to GDI's representation.
+func colorRef(c color.NRGBA) win32.COLORREF {
+	return win32.RGB(c.R, c.G, c.B)
+}
+
+// px converts device-independent pixels to physical pixels.
+func (e *editorWindow) px(dip float64) int32 {
+	return int32(math.Round(dip * e.scale))
+}
+
+func (e *editorWindow) headerLayout() render.HeaderLayout {
+	return render.HeaderLayout{Width: int(win32.GetClientRect(e.hwnd).Width()), Scale: e.scale}
+}
+
+// layout positions the text control below the header, inset from the
+// window's edges.
+func (e *editorWindow) layout() {
+	client := win32.GetClientRect(e.hwnd)
+	top := int32(e.headerLayout().Height())
+	win32.MoveWindow(e.edit,
+		e.px(editorPadLeft), top,
+		max(client.Width()-e.px(editorPadLeft)-e.px(editorPadRight), 0),
+		max(client.Height()-top-e.px(editorPadBottom), 0),
+		true)
+}
+
+// paint draws the header and fills the rest of the window with the paper
+// colour; the text control paints itself on top.
+func (e *editorWindow) paint() {
+	var ps win32.PAINTSTRUCT
+	dc := win32.BeginPaint(e.hwnd, &ps)
+	defer win32.EndPaint(e.hwnd, &ps)
+
+	client := win32.GetClientRect(e.hwnd)
+	layout := e.headerLayout()
+	if layout.Width <= 0 {
+		return
+	}
+	render.DrawHeader(e.header, layout, e.sw, render.HeaderState{Hover: e.hover, Pressed: e.pressed, Pinned: e.pinned})
+
+	w, h := layout.Width, layout.Height()
+	if e.dib == nil || e.dib.Width != w || e.dib.Height != h {
+		e.dib.Close()
+		var err error
+		if e.dib, err = win32.NewDIB(w, h); err != nil {
+			e.dib = nil
+			log.Printf("editor: %v", err)
+			return
+		}
+	}
+	e.dib.CopyFrom(e.header.Img)
+	win32.BitBlt(dc, 0, 0, int32(w), int32(h), e.dib.DC, 0, 0)
+
+	body := win32.RECT{Top: int32(h), Right: client.Right, Bottom: client.Bottom}
+	win32.FillRect(dc, &body, e.paper)
+}
+
+func (e *editorWindow) invalidateHeader() {
+	r := win32.RECT{Right: win32.GetClientRect(e.hwnd).Right, Bottom: int32(e.headerLayout().Height())}
+	win32.InvalidateRect(e.hwnd, &r)
+}
+
+// hitTest implements WM_NCHITTEST for the borderless window: the edges
+// resize, the header drags and everything else is ordinary client area.
+func (e *editorWindow) hitTest(screen win32.POINT) uintptr {
+	r := win32.GetWindowRect(e.hwnd)
+	x, y := screen.X-r.Left, screen.Y-r.Top
+	border := e.px(resizeBorder)
+
+	left, right := x < border, x >= r.Width()-border
+	top, bottom := y < border, y >= r.Height()-border
+	switch {
+	case top && left:
+		return win32.HTTOPLEFT
+	case top && right:
+		return win32.HTTOPRIGHT
+	case bottom && left:
+		return win32.HTBOTTOMLEFT
+	case bottom && right:
+		return win32.HTBOTTOMRIGHT
+	case left:
+		return win32.HTLEFT
+	case right:
+		return win32.HTRIGHT
+	case top:
+		return win32.HTTOP
+	case bottom:
+		return win32.HTBOTTOM
+	}
+
+	layout := e.headerLayout()
+	if int(y) < layout.Height() && layout.Hit(int(x), int(y)) == render.ButtonNone {
+		return win32.HTCAPTION
+	}
+	return win32.HTCLIENT
+}
+
+// click runs the action of a header button.
+func (e *editorWindow) click(b render.HeaderButton) {
+	switch b {
+	case render.ButtonColor:
+		e.app.cycleColor()
+	case render.ButtonNew:
+		e.app.newNote()
+	case render.ButtonMenu:
+		if e.note != nil {
+			r := e.headerLayout().ButtonRect(render.ButtonMenu)
+			origin := win32.GetWindowRect(e.hwnd)
+			e.app.showNoteMenu(e.note.ID, win32.POINT{X: origin.Left + int32(r.X), Y: origin.Top + int32(r.Y+r.H)})
+		}
+	case render.ButtonPin:
+		e.setPinned(!e.pinned)
+	case render.ButtonClose:
+		e.hide()
+	}
+}
+
+// setPinned controls whether the editor stays open when it loses focus.
+func (e *editorWindow) setPinned(pinned bool) {
+	if e.pinned == pinned {
+		return
+	}
+	e.pinned = pinned
+	e.invalidateHeader()
+	e.app.updateHold()
+}
+
+// handleKey processes editor-wide keyboard shortcuts before the text control
+// sees the key. It reports whether the key was consumed.
+func (e *editorWindow) handleKey(vk uintptr) bool {
+	ctrl := win32.KeyDown(win32.VK_CONTROL)
+	shift := win32.KeyDown(win32.VK_SHIFT)
+	alt := win32.KeyDown(win32.VK_MENU)
+
+	if vk == win32.VK_ESCAPE {
+		e.hide()
+		return true
+	}
+	// AltGr is reported as Ctrl+Alt and types characters on many layouts.
+	if !ctrl || alt {
+		return false
+	}
+
+	switch vk {
+	case 'N':
+		e.app.newNote()
+	case 'W':
+		e.hide()
+	case 'S':
+		e.flush()
+	case 'P':
+		e.setPinned(!e.pinned)
+	case 'B':
+		e.wrapSelection("**")
+	case 'I':
+		e.wrapSelection("_")
+	case win32.VK_OEM_PERIOD:
+		e.app.cycleColor()
+	case win32.VK_NEXT:
+		e.app.stepNote(+1)
+	case win32.VK_PRIOR:
+		e.app.stepNote(-1)
+	case win32.VK_BACK:
+		if !shift {
+			return false
+		}
+		if e.note != nil {
+			e.app.deleteNote(e.note.ID)
+		}
+	case 'E', 'L', 'R', 'J', '1', '2', '5':
+		// Rich edit paragraph-formatting shortcuts, which make no sense
+		// for plain text.
+		return e.rich
+	default:
+		return false
+	}
+	return true
+}
+
+// wrapSelection surrounds the selected text with a Markdown marker, or
+// inserts an empty pair with the caret in between.
+func (e *editorWindow) wrapSelection(marker string) {
+	if !e.rich {
+		return
+	}
+	var sel win32.CHARRANGE
+	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+
+	selected := ""
+	if n := sel.Max - sel.Min; n > 0 {
+		buf := make([]uint16, n+1)
+		win32.SendMessage(e.edit, win32.EM_GETSELTEXT, 0, uintptr(unsafe.Pointer(&buf[0])))
+		selected = win32.UTF16ToString(buf)
+	}
+	const canUndo = 1
+	win32.SendMessage(e.edit, win32.EM_REPLACESEL, canUndo, uintptr(unsafe.Pointer(win32.UTF16(marker+selected+marker))))
+
+	if selected == "" {
+		caret := win32.CHARRANGE{Min: sel.Min + int32(len(marker)), Max: sel.Min + int32(len(marker))}
+		win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&caret)))
+	}
+}
+
+// endMove runs when the user finishes dragging or resizing the window.
+func (e *editorWindow) endMove() {
+	r := win32.GetWindowRect(e.hwnd)
+	resized := r.Width() != e.moveStart.Width() || r.Height() != e.moveStart.Height()
+	moved := r.Left != e.moveStart.Left || r.Top != e.moveStart.Top
+
+	if resized {
+		e.app.cfg.EditorWidth = int(math.Round(float64(r.Width()) / e.scale))
+		e.app.cfg.EditorHeight = int(math.Round(float64(r.Height()) / e.scale))
+		e.app.saveConfig()
+	} else if moved {
+		// Dragging the note somewhere is a clear sign the user wants it to
+		// stay there.
+		e.setPinned(true)
+	}
+}
+
+func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
+	switch msg {
+	case win32.WM_NCCALCSIZE:
+		if wp != 0 {
+			// Claim the whole window as client area, removing the standard
+			// frame while keeping its shadow and resize behaviour.
+			return 0
+		}
+
+	case win32.WM_NCHITTEST:
+		return e.hitTest(win32.PointFromLParam(lp))
+
+	case win32.WM_NCACTIVATE:
+		// Passing -1 stops Windows from repainting the (removed) frame.
+		return win32.DefWindowProc(hwnd, msg, wp, ^uintptr(0))
+
+	case win32.WM_GETMINMAXINFO:
+		info := win32.PointerFromLParam[win32.MINMAXINFO](lp)
+		info.MinTrackSize = win32.POINT{X: e.px(config.MinEditorWidth), Y: e.px(config.MinEditorHeight)}
+		return 0
+
+	case win32.WM_SIZE:
+		if e.edit != 0 {
+			e.layout()
+			win32.InvalidateRect(hwnd, nil)
+		}
+		return 0
+
+	case win32.WM_ERASEBKGND:
+		return 1
+
+	case win32.WM_PAINT:
+		e.paint()
+		return 0
+
+	case win32.WM_CTLCOLOREDIT:
+		// Only the classic EDIT fallback asks for its colours this way.
+		dc := win32.HDC(wp)
+		win32.SetTextColor(dc, colorRef(e.sw.Text))
+		win32.SetBkColor(dc, colorRef(e.sw.Paper))
+		return uintptr(e.paper)
+
+	case win32.WM_SETFOCUS:
+		win32.SetFocus(e.edit)
+		return 0
+
+	case win32.WM_ACTIVATE:
+		if win32.LoWord(wp) == win32.WA_INACTIVE && e.shown && !e.pinned && !e.app.menuOpen {
+			// An unpinned note tucks itself away as soon as the user
+			// turns to something else.
+			e.hide()
+		}
+
+	case win32.WM_COMMAND:
+		if win32.HiWord(wp) == win32.EN_CHANGE && win32.HWND(lp) == e.edit && !e.loading {
+			e.dirty = true
+			win32.SetTimer(hwnd, saveTimer, saveDelay)
+		}
+		return 0
+
+	case win32.WM_TIMER:
+		if wp == saveTimer {
+			e.flush()
+			e.app.noteEdited()
+		}
+		return 0
+
+	case win32.WM_MOUSEMOVE:
+		pt := win32.PointFromLParam(lp)
+		if hover := e.headerLayout().Hit(int(pt.X), int(pt.Y)); hover != e.hover {
+			e.hover = hover
+			e.invalidateHeader()
+		}
+		if !e.tracking {
+			e.tracking = true
+			win32.TrackMouseEvent(&win32.TRACKMOUSEEVENT{Flags: win32.TME_LEAVE, Track: hwnd})
+		}
+		return 0
+
+	case win32.WM_MOUSELEAVE:
+		e.tracking = false
+		if e.hover != render.ButtonNone || e.pressed != render.ButtonNone {
+			e.hover, e.pressed = render.ButtonNone, render.ButtonNone
+			e.invalidateHeader()
+		}
+		return 0
+
+	case win32.WM_LBUTTONDOWN:
+		pt := win32.PointFromLParam(lp)
+		e.pressed = e.headerLayout().Hit(int(pt.X), int(pt.Y))
+		e.invalidateHeader()
+		return 0
+
+	case win32.WM_LBUTTONUP:
+		pt := win32.PointFromLParam(lp)
+		pressed := e.pressed
+		e.pressed = render.ButtonNone
+		e.invalidateHeader()
+		if b := e.headerLayout().Hit(int(pt.X), int(pt.Y)); b != render.ButtonNone && b == pressed {
+			e.click(b)
+		}
+		return 0
+
+	case win32.WM_ENTERSIZEMOVE:
+		e.moveStart = win32.GetWindowRect(hwnd)
+		return 0
+
+	case win32.WM_EXITSIZEMOVE:
+		e.endMove()
+		return 0
+
+	case win32.WM_DPICHANGED:
+		// Windows suggests a rectangle scaled for the new monitor.
+		suggested := win32.PointerFromLParam[win32.RECT](lp)
+		e.setScale(float64(win32.HiWord(wp)) / win32.USER_DEFAULT_DPI)
+		win32.SetWindowPos(hwnd, 0, suggested.Left, suggested.Top, suggested.Width(), suggested.Height(),
+			win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+		return 0
+
+	case win32.WM_CLOSE:
+		e.hide()
+		return 0
+
+	case win32.WM_DESTROY:
+		e.dib.Close()
+		e.dib = nil
+		if e.font != 0 {
+			win32.DeleteObject(win32.HGDIOBJ(e.font))
+		}
+		if e.paper != 0 {
+			win32.DeleteObject(win32.HGDIOBJ(e.paper))
+		}
+		return 0
+	}
+	return win32.DefWindowProc(hwnd, msg, wp, lp)
+}
