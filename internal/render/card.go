@@ -267,7 +267,7 @@ func drawCard(c *Canvas, tab deck.Tab, s float64, dark bool, text TextDrawer) {
 			col = muted
 		}
 		if line.first {
-			drawMark(c, line, r.X, y, s, op, tabSw, sw)
+			drawMark(c, line, r.X, y, s, op, sw)
 		}
 		if line.kind == markdown.Quote {
 			c.FillRect(deck.Rect{X: r.X + line.x - 12*s, Y: y + 3*s, W: 2 * s, H: line.h - 6*s}, WithAlpha(sw.Text, 0.25*op))
@@ -300,24 +300,37 @@ func drawCard(c *Canvas, tab deck.Tab, s float64, dark bool, text TextDrawer) {
 }
 
 // drawMark draws the task box or bullet at the start of a line.
-func drawMark(c *Canvas, line cardLine, left, y, s, op float64, tabSw, sw Swatch) {
+func drawMark(c *Canvas, line cardLine, left, y, s, op float64, sw Swatch) {
 	cy := y + line.h/2
 	switch line.kind {
 	case markdown.Task:
 		b := cardBoxSize * s
-		box := deck.Rect{X: left + line.x - cardMarkWidth*s, Y: cy - b/2, W: b, H: b}
-		if line.done {
-			c.FillRoundRect(box, 3.5*s, WithAlpha(tabSw.Fill, op))
-			x, yy := box.X, box.Y
-			w := math.Max(1.2, 1.6*s)
-			c.Line(x+3.2*s, yy+6.8*s, x+5.6*s, yy+9.2*s, w, WithAlpha(tabSw.Ink, op))
-			c.Line(x+5.6*s, yy+9.2*s, x+10*s, yy+4.2*s, w, WithAlpha(tabSw.Ink, op))
-			return
-		}
-		c.StrokeRoundRect(box, 3.5*s, math.Max(1, 1.3*s), WithAlpha(sw.Text, 0.45*op))
+		DrawTaskBox(c, deck.Rect{X: left + line.x - cardMarkWidth*s, Y: cy - b/2, W: b, H: b}, line.done, sw, op)
 	case markdown.Bullet:
-		c.FillCircle(left+line.x-cardMarkWidth*s+6*s, cy, 2.2*s, WithAlpha(sw.Text, 0.55*op))
+		DrawBullet(c, left+line.x-cardMarkWidth*s+6*s, cy, s, sw, op)
 	}
+}
+
+// DrawTaskBox draws a task's box filling r: once ticked, filled with the
+// note's colour and a tick; until then, an outline.
+func DrawTaskBox(c *Canvas, r deck.Rect, checked bool, sw Swatch, opacity float64) {
+	s := r.W / cardBoxSize
+	radius := 3.5 * s
+	if checked {
+		c.FillRoundRect(r, radius, WithAlpha(sw.Fill, opacity))
+		w := math.Max(1.2, 1.6*s)
+		ink := WithAlpha(sw.Ink, opacity)
+		c.Line(r.X+3.2*s, r.Y+6.8*s, r.X+5.6*s, r.Y+9.2*s, w, ink)
+		c.Line(r.X+5.6*s, r.Y+9.2*s, r.X+10*s, r.Y+4.2*s, w, ink)
+		return
+	}
+	inset := math.Max(1, 1.3*s) / 2
+	c.StrokeRoundRect(r.Inflate(-inset, -inset), radius, math.Max(1, 1.3*s), WithAlpha(sw.Text, 0.5*opacity))
+}
+
+// DrawBullet draws a list bullet centred on (cx, cy) at scale s.
+func DrawBullet(c *Canvas, cx, cy, s float64, sw Swatch, opacity float64) {
+	c.FillCircle(cx, cy, 2.2*s, WithAlpha(sw.Text, 0.6*opacity))
 }
 
 func clampUnit(v float64) float64 {

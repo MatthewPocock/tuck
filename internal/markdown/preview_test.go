@@ -34,3 +34,30 @@ func TestTasks(t *testing.T) {
 		t.Errorf("Tasks = %d of %d, want 2 of 3", done, total)
 	}
 }
+
+func TestMarks(t *testing.T) {
+	text := "Title\n- [ ] milk\n  * [x] eggs\n- plain\n# - not a bullet"
+	got := Marks(text)
+	want := []Mark{
+		{Kind: TaskMark, Start: 8, End: 11, Hide: [2]int{6, 8}},
+		{Kind: TaskMark, Start: 21, End: 24, Hide: [2]int{19, 21}, Checked: true},
+		{Kind: BulletMark, Start: 30, End: 31},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Marks:\n got %+v\nwant %+v", got, want)
+	}
+	if text[got[0].Start:got[0].End] != "[ ]" || text[got[1].Hide[0]:got[1].Hide[1]] != "* " || text[got[2].Start] != '-' {
+		t.Error("offsets do not point at the markers")
+	}
+}
+
+func TestTitleLine(t *testing.T) {
+	text := "\n  Groceries\n\n \nmilk"
+	start, end, block, ok := TitleLine(text)
+	if !ok || text[start:end] != "  Groceries" || text[block:] != "milk" {
+		t.Errorf("TitleLine = %d, %d, %d, %v", start, end, block, ok)
+	}
+	if _, _, _, ok := TitleLine(" \n\n"); ok {
+		t.Error("a blank note has a title")
+	}
+}

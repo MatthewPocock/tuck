@@ -226,3 +226,48 @@ func TestClickingACardOpensTheNote(t *testing.T) {
 		t.Error("the card stayed open beside the editor")
 	}
 }
+
+func TestNoteSlidesOpen(t *testing.T) {
+	a := newTestApp(t)
+	a.instant = false
+	n := addNote(t, a, "Groceries")
+	a.openNote(n.ID)
+	e := a.editor
+	if !e.entering {
+		t.Fatal("the note did not animate open")
+	}
+	start := win32.GetWindowRect(e.hwnd)
+	if start.Left == e.enterRect.Left {
+		t.Error("the note started where it ends up")
+	}
+	e.enterAt = e.enterAt.Add(-enterDuration)
+	e.stepEntrance()
+	if r := win32.GetWindowRect(e.hwnd); e.entering || r != e.enterRect || win32.ExStyle(e.hwnd)&win32.WS_EX_LAYERED != 0 {
+		t.Errorf("after the animation the note is at %+v, want %+v (entering %v)", r, e.enterRect, e.entering)
+	}
+}
+
+func TestNoteFadesWhenClosed(t *testing.T) {
+	a := newTestApp(t)
+	n := addNote(t, a, "Groceries")
+	a.openNote(n.ID)
+	a.instant = false
+	e := a.editor
+	e.hide()
+	if !e.exiting || !win32.IsWindowVisible(e.hwnd) {
+		t.Fatal("the note vanished at once")
+	}
+	// Opening a note again cuts the fade short.
+	a.instant = true
+	a.openNote(n.ID)
+	if e.exiting || !win32.IsWindowVisible(e.hwnd) || win32.ExStyle(e.hwnd)&win32.WS_EX_LAYERED != 0 {
+		t.Error("reopening did not cancel the fade")
+	}
+	a.instant = false
+	e.hide()
+	e.exitAt = e.exitAt.Add(-exitDuration)
+	e.stepExit()
+	if e.exiting || win32.IsWindowVisible(e.hwnd) {
+		t.Error("the note is still showing after the fade")
+	}
+}

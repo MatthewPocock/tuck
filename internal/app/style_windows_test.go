@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/MatthewPocock/tuck/internal/markdown"
 	"github.com/MatthewPocock/tuck/internal/win32"
 )
 
@@ -18,11 +19,20 @@ func formatAt(a *App, char int32) win32.CHARFORMAT {
 // formatOf returns the formatting of a range of the text, which should be
 // uniform.
 func formatOf(a *App, min, max int32) win32.CHARFORMAT {
+	// Looking works through the selection; keep that from counting as the
+	// user moving the caret, which changes what is shown.
+	e := a.editor
+	e.loading = true
+	defer func() { e.loading = false }()
+	var sel win32.CHARRANGE
+	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+	defer win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+
 	r := win32.CHARRANGE{Min: min, Max: max}
-	win32.SendMessage(a.editor.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&r)))
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&r)))
 	var f win32.CHARFORMAT
 	f.Size = uint32(unsafe.Sizeof(f))
-	win32.SendMessage(a.editor.edit, win32.EM_GETCHARFORMAT, win32.SCF_SELECTION, uintptr(unsafe.Pointer(&f)))
+	win32.SendMessage(e.edit, win32.EM_GETCHARFORMAT, win32.SCF_SELECTION, uintptr(unsafe.Pointer(&f)))
 	return f
 }
 
@@ -46,7 +56,7 @@ func openRich(t *testing.T, body string) *App {
 }
 
 func TestMarkdownIsStyled(t *testing.T) {
-	a := openRich(t, "# Title\nsome **bold** text\n- [x] done")
+	a := openRich(t, "Note\n# Title\nsome **bold** text\n- [x] done")
 	text := a.editor.text()
 	at := func(sub string) int32 { return int32(strings.Index(text, sub)) }
 
@@ -62,8 +72,45 @@ func TestMarkdownIsStyled(t *testing.T) {
 	if f := formatAt(a, at("done")); f.Effects&win32.CFE_STRIKEOUT == 0 {
 		t.Error("finished task is not struck through")
 	}
-	if f, g := formatAt(a, at("**")), formatAt(a, at("some")); f.TextColor == g.TextColor {
-		t.Error("Markdown markers are not muted")
+	// Away from the caret the markers are tucked out of sight.
+	if f, g := formatAt(a, at("**")), formatAt(a, at("some")); f.Height >= g.Height || f.TextColor != colorRef(a.editor.sw.Paper) {
+		t.Errorf("Markdown markers away from the caret are not collapsed: %+v", f)
+	}
+	// On the line being edited they show, faintly.
+	caret := win32.CHARRANGE{Min: at("text"), Max: at("text")}
+	win32.SendMessage(a.editor.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&caret)))
+	if f, g := formatAt(a, at("**")), formatAt(a, at("some")); f.TextColor == g.TextColor || f.Height != g.Height {
+		t.Errorf("Markdown markers on the caret's line are not shown muted: %+v", f)
+	}
+}
+
+func TestTitleMovesIntoTheHeader(t *testing.T) {
+	a := openRich(t, "Groceries\n\n- [ ] milk\n- just a bullet")
+	text := a.editor.text()
+	if a.editor.title != "Groceries" {
+		t.Errorf("header title %q", a.editor.title)
+	}
+	if f := formatAt(a, 0); f.Height != collapsedTwips {
+		t.Errorf("title line is not collapsed while editing elsewhere: %+v", f)
+	}
+	if len(a.editor.marks) != 2 || a.editor.marks[0].kind != markdown.TaskMark || a.editor.marks[1].kind != markdown.BulletMark {
+		t.Errorf("drawn marks %+v", a.editor.marks)
+	}
+	if f := formatAt(a, int32(strings.Index(text, "[ ]"))); f.TextColor != colorRef(a.editor.sw.Paper) {
+		t.Error("the task box characters are visible under the drawn box")
+	}
+	// Moving the caret to the title line brings it back.
+	caret := win32.CHARRANGE{Min: 3, Max: 3}
+	win32.SendMessage(a.editor.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&caret)))
+	if f := formatAt(a, 0); f.Height == collapsedTwips {
+		t.Error("the title line stays collapsed with the caret on it")
+	}
+	// Deleting the line after the title leaves the title alone.
+	line := win32.CHARRANGE{Min: int32(strings.Index(text, "- [ ]")), Max: int32(strings.Index(text, "- just"))}
+	win32.SendMessage(a.editor.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&line)))
+	win32.SendMessage(a.editor.edit, win32.EM_REPLACESEL, 1, uintptr(unsafe.Pointer(win32.UTF16(""))))
+	if got := a.editor.text(); got != "Groceries\n\n- just a bullet" {
+		t.Errorf("after deleting a line: %q", got)
 	}
 }
 

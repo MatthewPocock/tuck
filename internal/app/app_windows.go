@@ -31,6 +31,7 @@ const (
 	editorClass     = "TuckEditor"
 	settingsClass   = "TuckSettings"
 	searchClass     = "TuckSearch"
+	shadowClass     = "TuckShadow"
 
 	// msgTray carries notification area icon events.
 	msgTray = win32.WM_APP + 1
@@ -74,6 +75,8 @@ Right-click the tray icon for settings.`
 // App is the running application.
 type App struct {
 	version string
+	// instant skips animations, so tests see windows where they end up.
+	instant bool
 	paths   paths
 	cfg     config.Config
 	store   *store.Store
@@ -210,6 +213,7 @@ func (a *App) createWindows() error {
 		editorClass:     win32.IDC_ARROW,
 		settingsClass:   win32.IDC_ARROW,
 		searchClass:     win32.IDC_ARROW,
+		shadowClass:     win32.IDC_ARROW,
 	} {
 		if err := registerClass(a.inst, class, cursor); err != nil {
 			return err

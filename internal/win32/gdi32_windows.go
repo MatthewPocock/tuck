@@ -17,6 +17,7 @@ var (
 	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
 	procCreateFontW        = gdi32.NewProc("CreateFontW")
 	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
+	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procDeleteObject       = gdi32.NewProc("DeleteObject")
 	procGdiFlush           = gdi32.NewProc("GdiFlush")
@@ -25,6 +26,14 @@ var (
 	procSetBkMode          = gdi32.NewProc("SetBkMode")
 	procSetTextColor       = gdi32.NewProc("SetTextColor")
 )
+
+// CreateRoundRectRgn creates a region with rounded corners. The right and
+// bottom edges are exclusive; ellipse is the diameter of the corners.
+func CreateRoundRectRgn(left, top, right, bottom, ellipse int32) HRGN {
+	r, _, _ := procCreateRoundRectRgn.Call(uintptr(left), uintptr(top), uintptr(right), uintptr(bottom),
+		uintptr(ellipse), uintptr(ellipse))
+	return HRGN(r)
+}
 
 func SelectObject(dc HDC, obj HGDIOBJ) HGDIOBJ {
 	r, _, _ := procSelectObject.Call(uintptr(dc), uintptr(obj))

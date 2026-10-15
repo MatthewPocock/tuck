@@ -37,10 +37,12 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
 - **Search everything** – `Ctrl+Alt+F` finds any note by its words, archived
   ones included, and opens it with the match selected. With nothing typed it
   lists your most recent notes, so it doubles as a quick switcher.
-- **Light Markdown** – headings, **bold**, _italic_, `code` and links are
-  styled as you type, and `- [ ]` tasks tick off with a click, sinking below
-  the ones still to do. The file stays plain Markdown, and a note can be
-  copied either as Markdown or as plain text.
+- **Markdown that gets out of the way** – headings, **bold**, _italic_,
+  `code` and links are styled as you type, and the Markdown symbols only show
+  on the line you are editing. `- [ ]` tasks become checkboxes that tick off
+  with a click, sinking below the ones still to do, and a note's first line
+  moves up into its coloured header as its title. The file stays plain
+  Markdown, and a note can be copied either as Markdown or as plain text.
 - **Seven colours**, light and dark themes (follows Windows by default).
 - **Archive and undo** – archive notes you are done with; deleted notes go to
   a trash folder and the last one can be restored from the menu.

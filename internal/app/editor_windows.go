@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/MatthewPocock/tuck/internal/config"
+	"github.com/MatthewPocock/tuck/internal/deck"
 	"github.com/MatthewPocock/tuck/internal/note"
 	"github.com/MatthewPocock/tuck/internal/render"
 	"github.com/MatthewPocock/tuck/internal/win32"
@@ -18,6 +19,10 @@ import (
 
 const (
 	saveTimer = 1
+	// enterTimer and exitTimer drive the animations of a note opening and
+	// closing.
+	enterTimer = 2
+	exitTimer  = 3
 	// saveDelay is how long typing must pause before the note is written
 	// to disk.
 	saveDelay = 400 // milliseconds
@@ -29,6 +34,7 @@ const (
 // Editor layout in device-independent pixels.
 const (
 	editorPadLeft   = 16
+	editorPadTop    = 10
 	editorPadRight  = 4
 	editorPadBottom = 12
 	// resizeBorder is the width of the invisible band along the window's
@@ -36,6 +42,17 @@ const (
 	resizeBorder = 6
 	// editorGap is the space between the editor and the deck.
 	editorGap = 10
+	// A note opening slides in this far from the deck as it fades in.
+	enterSlide = 16
+)
+
+// enterDuration is how long a note takes to open: within Material Design's
+// range for a medium-sized element entering the screen.
+// Closing is quicker, as Material Design has things leave faster than they
+// arrive.
+const (
+	enterDuration = 300 * time.Millisecond
+	exitDuration  = 160 * time.Millisecond
 )
 
 // editorWindow is the borderless window in which one note at a time is
@@ -74,8 +91,9 @@ type editorWindow struct {
 	// border outlines the window where Desktop Window Manager does not.
 	border win32.HBRUSH
 	// drawBorder is true before Windows 11, which neither rounds the window
-	// nor colours its border.
+	// nor colours its border; shadow then does both.
 	drawBorder bool
+	shadow     *shadowWindow
 
 	header  *render.Canvas
 	dib     *win32.DIB
@@ -85,6 +103,29 @@ type editorWindow struct {
 	tracking bool
 	// moveStart is the window rectangle when a drag or resize began.
 	moveStart win32.RECT
+
+	// title is the note's title as shown in the header.
+	title string
+	// editRange is the byte range of the lines being edited, where Markdown
+	// syntax shows; revealOn is false while the text is not focused.
+	editRange [2]int
+	revealOn  bool
+	// marks are the task boxes and bullets drawn over the text, and
+	// markImages their pictures.
+	marks      []drawnMark
+	markImages map[markKey]*win32.DIB
+
+	// entering is set while the window animates open toward enterRect,
+	// starting enterSlide pixels toward the deck (enterDX).
+	entering  bool
+	enterAt   time.Time
+	enterRect win32.RECT
+	enterDX   int32
+	// exiting is set while the window fades out after closing, sliding back
+	// toward the deck from exitFrom.
+	exiting  bool
+	exitAt   time.Time
+	exitFrom win32.RECT
 }
 
 func newEditorWindow(a *App) (*editorWindow, error) {
@@ -104,6 +145,13 @@ func newEditorWindow(a *App) (*editorWindow, error) {
 	// the header covers it with opaque pixels.
 	win32.DwmExtendFrameIntoClientArea(hwnd, win32.MARGINS{Top: 1})
 	e.drawBorder = !win32.IsWindows11()
+	if e.drawBorder {
+		if e.shadow, err = newShadowWindow(a); err != nil {
+			// Only looks suffer; the note still works.
+			log.Printf("editor: shadow: %v", err)
+			e.shadow = nil
+		}
+	}
 
 	if err := e.createEdit(); err != nil {
 		return nil, err
@@ -125,7 +173,7 @@ func (e *editorWindow) createEdit() error {
 			win32.SendMessage(h, win32.EM_SETTEXTMODE, win32.TM_RICHTEXT|win32.TM_MULTILEVELUNDO, 0)
 			win32.SendMessage(h, win32.EM_EXLIMITTEXT, 0, maxNoteChars)
 			win32.SendMessage(h, win32.EM_AUTOURLDETECT, win32.AURL_ENABLEURL, 0)
-			win32.SendMessage(h, win32.EM_SETEVENTMASK, 0, win32.ENM_CHANGE|win32.ENM_LINK)
+			win32.SendMessage(h, win32.EM_SETEVENTMASK, 0, win32.ENM_CHANGE|win32.ENM_LINK|win32.ENM_SELCHANGE)
 			e.doc = win32.RichEditDocument(h)
 			e.subclassEdit()
 			return nil
@@ -144,6 +192,7 @@ func (e *editorWindow) createEdit() error {
 // open shows a note in the editor at the given screen rectangle. If the
 // editor is pinned and already visible it stays where the user put it.
 func (e *editorWindow) open(n *note.Note, at win32.RECT, scale float64) {
+	e.finishExit()
 	previous := e.note
 	if previous != nil && previous != n {
 		e.flush()
@@ -159,6 +208,9 @@ func (e *editorWindow) open(n *note.Note, at win32.RECT, scale float64) {
 	}
 	e.layout()
 
+	if !e.shown && !e.app.instant {
+		e.startEntrance(at)
+	}
 	e.shown = true
 	win32.ShowWindow(e.hwnd, win32.SW_SHOW)
 	win32.SetForegroundWindow(e.hwnd)
@@ -172,16 +224,106 @@ func (e *editorWindow) open(n *note.Note, at win32.RECT, scale float64) {
 	}
 }
 
+// startEntrance makes the window, about to be shown at r, fade in while
+// sliding out from the deck, as if it came out of its tab.
+func (e *editorWindow) startEntrance(r win32.RECT) {
+	e.entering, e.enterAt, e.enterRect = true, time.Now(), r
+	e.enterDX = e.px(enterSlide)
+	if e.app.cfg.Edge == config.EdgeLeft {
+		e.enterDX = -e.enterDX
+	}
+	win32.SetExStyle(e.hwnd, win32.ExStyle(e.hwnd)|win32.WS_EX_LAYERED)
+	win32.SetLayeredAlpha(e.hwnd, 0)
+	e.shadow.setAlpha(0)
+	win32.SetWindowPos(e.hwnd, 0, r.Left+e.enterDX, r.Top, 0, 0, win32.SWP_NOSIZE|win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+	win32.SetTimer(e.hwnd, enterTimer, 10)
+}
+
+// stepEntrance moves the opening animation on to the current time.
+func (e *editorWindow) stepEntrance() {
+	t := float64(time.Since(e.enterAt)) / float64(enterDuration)
+	if t >= 1 || !e.shown {
+		e.finishEntrance()
+		return
+	}
+	// The window fades in over the first half and keeps settling into
+	// place after it is opaque.
+	alpha := uint8(math.Round(255 * math.Min(1, t*2)))
+	win32.SetLayeredAlpha(e.hwnd, alpha)
+	e.shadow.setAlpha(alpha)
+	x := e.enterRect.Left + int32(math.Round(float64(e.enterDX)*(1-deck.EmphasizedDecelerate(t))))
+	win32.SetWindowPos(e.hwnd, 0, x, e.enterRect.Top, 0, 0, win32.SWP_NOSIZE|win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+}
+
+// finishEntrance ends the opening animation, leaving the window where it
+// was headed.
+func (e *editorWindow) finishEntrance() {
+	if !e.entering {
+		return
+	}
+	e.entering = false
+	win32.KillTimer(e.hwnd, enterTimer)
+	win32.SetWindowPos(e.hwnd, 0, e.enterRect.Left, e.enterRect.Top, 0, 0, win32.SWP_NOSIZE|win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+	win32.SetExStyle(e.hwnd, win32.ExStyle(e.hwnd)&^win32.WS_EX_LAYERED)
+	e.shadow.setAlpha(255)
+	win32.InvalidateRect(e.hwnd, nil)
+}
+
+// startExit fades the window out while it slides back toward the deck, then
+// hides it.
+func (e *editorWindow) startExit() {
+	if e.app.instant || !win32.IsWindowVisible(e.hwnd) {
+		win32.ShowWindow(e.hwnd, win32.SW_HIDE)
+		return
+	}
+	e.exiting, e.exitAt, e.exitFrom = true, time.Now(), win32.GetWindowRect(e.hwnd)
+	win32.SetExStyle(e.hwnd, win32.ExStyle(e.hwnd)|win32.WS_EX_LAYERED)
+	win32.SetLayeredAlpha(e.hwnd, 255)
+	win32.SetTimer(e.hwnd, exitTimer, 10)
+}
+
+// stepExit moves the closing animation on to the current time.
+func (e *editorWindow) stepExit() {
+	t := float64(time.Since(e.exitAt)) / float64(exitDuration)
+	if t >= 1 {
+		e.finishExit()
+		return
+	}
+	p := deck.EmphasizedAccelerate(t)
+	alpha := uint8(math.Round(255 * (1 - math.Min(1, t*1.2))))
+	win32.SetLayeredAlpha(e.hwnd, alpha)
+	e.shadow.setAlpha(alpha)
+	dx := e.px(enterSlide)
+	if e.app.cfg.Edge == config.EdgeLeft {
+		dx = -dx
+	}
+	x := e.exitFrom.Left + int32(math.Round(float64(dx)*p))
+	win32.SetWindowPos(e.hwnd, 0, x, e.exitFrom.Top, 0, 0, win32.SWP_NOSIZE|win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
+}
+
+// finishExit hides a window that is fading out, at once.
+func (e *editorWindow) finishExit() {
+	if !e.exiting {
+		return
+	}
+	e.exiting = false
+	win32.KillTimer(e.hwnd, exitTimer)
+	win32.ShowWindow(e.hwnd, win32.SW_HIDE)
+	win32.SetExStyle(e.hwnd, win32.ExStyle(e.hwnd)&^win32.WS_EX_LAYERED)
+	e.shadow.setAlpha(255)
+}
+
 // hide saves and closes the editor.
 func (e *editorWindow) hide() {
 	if !e.shown {
 		return
 	}
+	e.finishEntrance()
 	// Clear shown first: hiding the window deactivates it, which would
 	// otherwise re-enter hide.
 	e.shown = false
 	e.flush()
-	win32.ShowWindow(e.hwnd, win32.SW_HIDE)
+	e.startExit()
 	if e.folded {
 		// The next note opens at full size.
 		e.folded = false
@@ -201,6 +343,7 @@ func (e *editorWindow) hide() {
 // restore shows a note pinned at a rectangle, as it was when Tuck last
 // ran, without taking focus from whatever the user is doing.
 func (e *editorWindow) restore(n *note.Note, at win32.RECT, scale float64) {
+	e.finishExit()
 	e.note = n
 	e.pinned = true
 	e.setScale(scale)
@@ -309,6 +452,15 @@ func (e *editorWindow) setText(body string) {
 	e.restyle()
 	e.loading = false
 	e.dirty = false
+	e.updateTitle()
+}
+
+// updateTitle shows the note's current first line in the header.
+func (e *editorWindow) updateTitle() {
+	if title := (&note.Note{Body: e.text()}).Title(); title != e.title {
+		e.title = title
+		e.invalidateHeader()
+	}
 }
 
 // setScale adapts fonts and metrics to the display scale factor.
@@ -317,6 +469,7 @@ func (e *editorWindow) setScale(scale float64) {
 		return
 	}
 	e.scale = scale
+	e.dropMarkImages()
 	if e.font != 0 {
 		win32.DeleteObject(win32.HGDIOBJ(e.font))
 	}
@@ -343,6 +496,7 @@ func (e *editorWindow) applyTheme() {
 	}
 	dark := e.app.dark()
 	e.sw = render.Palette(e.note.Color, dark)
+	e.dropMarkImages()
 
 	if e.paper != 0 {
 		win32.DeleteObject(win32.HGDIOBJ(e.paper))
@@ -372,6 +526,9 @@ func (e *editorWindow) applyTheme() {
 
 	win32.InvalidateRect(e.hwnd, nil)
 	win32.InvalidateRect(e.edit, nil)
+	if e.shown {
+		e.shadow.follow(e, true)
+	}
 }
 
 // colorRef converts an opaque colour to GDI's representation.
@@ -392,7 +549,7 @@ func (e *editorWindow) headerLayout() render.HeaderLayout {
 // window's edges.
 func (e *editorWindow) layout() {
 	client := win32.GetClientRect(e.hwnd)
-	top := int32(e.headerLayout().Height())
+	top := int32(e.headerLayout().Height()) + e.px(editorPadTop)
 	win32.MoveWindow(e.edit,
 		e.px(editorPadLeft), top,
 		max(client.Width()-e.px(editorPadLeft)-e.px(editorPadRight), 0),
@@ -412,12 +569,9 @@ func (e *editorWindow) paint() {
 	if layout.Width <= 0 {
 		return
 	}
-	state := render.HeaderState{Hover: e.hover, Pressed: e.pressed, Pinned: e.pinned}
-	if e.folded && e.note != nil {
-		state.Title = e.note.Title()
-		if state.Title == "" {
-			state.Title = "Untitled"
-		}
+	state := render.HeaderState{Hover: e.hover, Pressed: e.pressed, Pinned: e.pinned, Title: e.title}
+	if state.Title == "" {
+		state.Title, state.Placeholder = "New note", true
 	}
 	render.DrawHeader(e.header, layout, e.sw, state, e.app.text)
 
@@ -437,7 +591,7 @@ func (e *editorWindow) paint() {
 	body := win32.RECT{Top: int32(h), Right: client.Right, Bottom: client.Bottom}
 	win32.FillRect(dc, &body, e.paper)
 
-	if e.drawBorder {
+	if e.drawBorder && e.shadow == nil {
 		// The text control is inset from every edge, so a hairline drawn
 		// here is never covered.
 		t := max(1, e.px(1))
@@ -496,8 +650,6 @@ func (e *editorWindow) hitTest(screen win32.POINT) uintptr {
 // click runs the action of a header button.
 func (e *editorWindow) click(b render.HeaderButton) {
 	switch b {
-	case render.ButtonColor:
-		e.app.cycleColor(e)
 	case render.ButtonNew:
 		e.app.newNote()
 	case render.ButtonMenu:
@@ -667,7 +819,14 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 			e.layout()
 			win32.InvalidateRect(hwnd, nil)
 		}
+		e.shadow.clip(e)
 		return 0
+
+	case win32.WM_WINDOWPOSCHANGED:
+		pos := win32.PointerFromLParam[win32.WINDOWPOS](lp)
+		visible := pos.Flags&win32.SWP_HIDEWINDOW == 0 && (win32.IsWindowVisible(hwnd) || pos.Flags&win32.SWP_SHOWWINDOW != 0)
+		e.shadow.follow(e, visible)
+		// The default handler turns this into WM_SIZE and WM_MOVE.
 
 	case win32.WM_ERASEBKGND:
 		return 1
@@ -701,11 +860,14 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 			e.dirty = true
 			win32.SetTimer(hwnd, saveTimer, saveDelay)
 			e.restyle()
+			e.updateTitle()
 		}
 		return 0
 
 	case win32.WM_NOTIFY:
-		if hdr := win32.PointerFromLParam[win32.NMHDR](lp); hdr.From == e.edit && hdr.Code == win32.EN_LINK {
+		if hdr := win32.PointerFromLParam[win32.NMHDR](lp); hdr.From == e.edit && hdr.Code == win32.EN_SELCHANGE {
+			e.selectionMoved()
+		} else if hdr.From == e.edit && hdr.Code == win32.EN_LINK {
 			link := win32.PointerFromLParam[win32.ENLINK](lp)
 			if link.Msg == win32.WM_LBUTTONUP {
 				e.openLink(link.Range)
@@ -714,9 +876,14 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 		return 0
 
 	case win32.WM_TIMER:
-		if wp == saveTimer {
+		switch wp {
+		case saveTimer:
 			e.flush()
 			e.app.noteEdited()
+		case enterTimer:
+			e.stepEntrance()
+		case exitTimer:
+			e.stepExit()
 		}
 		return 0
 
@@ -757,6 +924,7 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 		return 0
 
 	case win32.WM_ENTERSIZEMOVE:
+		e.finishEntrance()
 		e.moveStart = win32.GetWindowRect(hwnd)
 		return 0
 
@@ -797,6 +965,10 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 	case win32.WM_DESTROY:
 		e.dib.Close()
 		e.dib = nil
+		e.dropMarkImages()
+		if e.shadow != nil {
+			win32.DestroyWindow(e.shadow.hwnd)
+		}
 		if e.font != 0 {
 			win32.DeleteObject(win32.HGDIOBJ(e.font))
 		}

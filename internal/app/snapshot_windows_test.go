@@ -2,13 +2,17 @@ package app
 
 import (
 	"image"
+	"image/color"
+	"image/draw"
 	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/MatthewPocock/tuck/internal/config"
+	"github.com/MatthewPocock/tuck/internal/deck"
 	"github.com/MatthewPocock/tuck/internal/note"
+	"github.com/MatthewPocock/tuck/internal/render"
 	"github.com/MatthewPocock/tuck/internal/win32"
 )
 
@@ -51,20 +55,24 @@ func TestSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newTestApp(t)
-	save := func(name string, hwnd win32.HWND) {
+	saveImage := func(name string, img image.Image) {
 		t.Helper()
 		path := filepath.Join(snapshotDir, name+".png")
 		f, err := os.Create(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := png.Encode(f, capture(t, hwnd)); err != nil {
+		if err := png.Encode(f, img); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.Close(); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("wrote %s", path)
+	}
+	save := func(name string, hwnd win32.HWND) {
+		t.Helper()
+		saveImage(name, capture(t, hwnd))
 	}
 	addNote(t, a, "Standup\nAsk Sam about the milk budget")
 	n := addNote(t, a, "Groceries for the weekend\n\n- [ ] oat milk\n- [x] coffee beans\n- [ ] something green\n\nRemember the **reusable bags**.")
@@ -78,6 +86,9 @@ func TestSnapshots(t *testing.T) {
 			win32.UpdateWindow(a.editor.hwnd)
 			win32.UpdateWindow(a.editor.edit)
 			save("editor-"+string(theme)+"-"+string(c), a.editor.hwnd)
+			if a.editor.shadow != nil {
+				saveImage("framed-"+string(theme)+"-"+string(c), framed(t, a.editor, theme == config.ThemeDark))
+			}
 		}
 		a.editor.setFolded(true)
 		win32.UpdateWindow(a.editor.hwnd)
@@ -92,4 +103,29 @@ func TestSnapshots(t *testing.T) {
 		a.search.hide()
 	}
 	win32.DestroyWindow(a.search.hwnd)
+}
+
+// framed composes a note window over its Windows 10 shadow on a plain
+// desktop colour, the way they look together on screen.
+func framed(t *testing.T, e *editorWindow, dark bool) *image.RGBA {
+	t.Helper()
+	shadow := e.shadow.canvas.Img
+	b := shadow.Bounds()
+	out := image.NewRGBA(b)
+	desktop := color.NRGBA{0xDD, 0xE2, 0xEA, 0xFF}
+	if dark {
+		desktop = color.NRGBA{0x1B, 0x1F, 0x26, 0xFF}
+	}
+	draw.Draw(out, b, image.NewUniform(desktop), image.Point{}, draw.Src)
+	draw.Draw(out, b, shadow, image.Point{}, draw.Over)
+
+	body := capture(t, e.hwnd)
+	pad := int(shadowPad(e.scale))
+	w, h := body.Bounds().Dx(), body.Bounds().Dy()
+	// The window region, approximately: its jagged corners sit inside the
+	// shadow window's smooth rim.
+	mask := render.NewCanvas(w, h)
+	mask.FillRoundRect(deck.Rect{X: 0.5, Y: 0.5, W: float64(w) - 1, H: float64(h) - 1}, editorRadius*e.scale, color.NRGBA{A: 0xFF})
+	draw.DrawMask(out, body.Bounds().Add(image.Pt(pad, pad)), body, image.Point{}, mask.Img, image.Point{}, draw.Over)
+	return out
 }

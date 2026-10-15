@@ -135,3 +135,71 @@ func Tasks(text string) (done, total int) {
 	}
 	return done, total
 }
+
+// MarkKind is the kind of a list marker the editor draws as a picture.
+type MarkKind int
+
+// The kinds of list markers.
+const (
+	TaskMark MarkKind = iota
+	BulletMark
+)
+
+// Mark is a list marker the editor shows as a drawn box or bullet in place
+// of its characters. Offsets are bytes of the text.
+type Mark struct {
+	Kind MarkKind
+	// Start and End are the characters the picture covers: "[ ]" or "[x]"
+	// for a task, the bullet character for a bullet.
+	Start, End int
+	// Hide is the syntax before a task's box, its bullet and space, which
+	// the editor hides altogether.
+	Hide [2]int
+	// Checked marks a ticked task.
+	Checked bool
+}
+
+// Marks finds the task boxes and bullets of a note.
+func Marks(text string) []Mark {
+	var marks []Mark
+	offset := 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		line := strings.TrimSuffix(line, "\n")
+		indent := indentOf(line)
+		if box, checked, ok := taskBox(line); ok {
+			marks = append(marks, Mark{
+				Kind: TaskMark, Start: offset + box, End: offset + box + 3,
+				Hide: [2]int{offset + indent, offset + box}, Checked: checked,
+			})
+		} else if headingLevel(line[indent:]) == 0 && bulletAt(line[indent:]) {
+			marks = append(marks, Mark{Kind: BulletMark, Start: offset + indent, End: offset + indent + 1})
+		}
+		offset += len(line) + 1
+	}
+	return marks
+}
+
+// TitleLine returns the byte range of a note's first non-blank line, which
+// is its title, and the end of the blank lines after it. ok is false for a
+// blank note.
+func TitleLine(text string) (start, end, blockEnd int, ok bool) {
+	offset := 0
+	lines := strings.SplitAfter(text, "\n")
+	for i, line := range lines {
+		bare := strings.TrimSuffix(line, "\n")
+		if strings.TrimSpace(bare) == "" {
+			offset += len(line)
+			continue
+		}
+		start, end = offset, offset+len(bare)
+		blockEnd = offset + len(line)
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next) != "" {
+				break
+			}
+			blockEnd += len(next)
+		}
+		return start, end, blockEnd, true
+	}
+	return 0, 0, 0, false
+}

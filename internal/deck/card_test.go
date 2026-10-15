@@ -29,7 +29,7 @@ func TestRestingOnATabGrowsItsCard(t *testing.T) {
 	d := cardDeck(4)
 	before := d.Frame().Tabs
 
-	rest(d, 1, 200*time.Millisecond)
+	rest(d, 1, 40*time.Millisecond)
 	if d.Peeked() != "" {
 		t.Fatal("the card opened before the pointer had settled")
 	}
@@ -54,8 +54,9 @@ func TestRestingOnATabGrowsItsCard(t *testing.T) {
 
 func TestSweepingAcrossTabsOpensNothing(t *testing.T) {
 	d := cardDeck(6)
+	// A quick sweep spends a few frames on each tab.
 	for i := range 6 {
-		rest(d, i, 150*time.Millisecond)
+		rest(d, i, 40*time.Millisecond)
 	}
 	if d.Peeked() != "" && d.Peeked() != "f" {
 		t.Errorf("peeked %q while sweeping", d.Peeked())

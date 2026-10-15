@@ -7,6 +7,8 @@ const (
 	WM_SIZE            = 0x0005
 	WM_ACTIVATE        = 0x0006
 	WM_SETFOCUS        = 0x0007
+	WM_KILLFOCUS       = 0x0008
+	WM_VSCROLL         = 0x0115
 	WM_SETTEXT         = 0x000C
 	WM_GETTEXT         = 0x000D
 	WM_GETTEXTLENGTH   = 0x000E
@@ -84,11 +86,12 @@ const (
 	WS_SYSMENU      = 0x00080000
 	WS_MINIMIZEBOX  = 0x00020000
 
-	WS_EX_TOPMOST    = 0x00000008
-	WS_EX_APPWINDOW  = 0x00040000
-	WS_EX_TOOLWINDOW = 0x00000080
-	WS_EX_LAYERED    = 0x00080000
-	WS_EX_NOACTIVATE = 0x08000000
+	WS_EX_TOPMOST     = 0x00000008
+	WS_EX_APPWINDOW   = 0x00040000
+	WS_EX_TOOLWINDOW  = 0x00000080
+	WS_EX_LAYERED     = 0x00080000
+	WS_EX_TRANSPARENT = 0x00000020
+	WS_EX_NOACTIVATE  = 0x08000000
 
 	ES_MULTILINE   = 0x0004
 	ES_AUTOVSCROLL = 0x0040
@@ -103,6 +106,10 @@ const (
 	SW_SHOW           = 5
 )
 
+// WM_WINDOWPOSCHANGED is sent after a window moved, was resized, changed
+// places in the z-order or was shown or hidden.
+const WM_WINDOWPOSCHANGED = 0x0047
+
 // SetWindowPos flags and insert-after handles.
 const (
 	SWP_NOSIZE     = 0x0001
@@ -110,12 +117,14 @@ const (
 	SWP_NOZORDER   = 0x0004
 	SWP_NOACTIVATE = 0x0010
 	SWP_SHOWWINDOW = 0x0040
+	SWP_HIDEWINDOW = 0x0080
 
 	HWND_TOPMOST HWND = ^HWND(0) // (HWND)-1
 )
 
 // WM_NCHITTEST results.
 const (
+	HTTRANSPARENT = ^uintptr(0) // -1: let the window below have the pointer
 	HTCLIENT      = 1
 	HTCAPTION     = 2
 	HTLEFT        = 10
@@ -231,6 +240,8 @@ const (
 	EM_CHARFROMPOS     = 0x00D7
 	EM_POSFROMCHAR     = 0x00D6
 	EM_GETCHARFORMAT   = WM_USER + 58
+	EM_SETPARAFORMAT   = WM_USER + 71
+	PFM_SPACEAFTER     = 0x00000080
 	EM_UNDO            = 0x00C7
 	EM_CANUNDO         = 0x00C6
 	EM_PASTESPECIAL    = WM_USER + 64
@@ -243,6 +254,8 @@ const (
 	TM_RICHTEXT       = 2
 	TM_MULTILEVELUNDO = 8
 	ENM_CHANGE        = 0x00000001
+	ENM_SELCHANGE     = 0x00080000
+	EN_SELCHANGE      = 0x0702
 	ENM_LINK          = 0x04000000
 	EN_LINK           = 0x070B
 	AURL_ENABLEURL    = 1
@@ -256,6 +269,9 @@ const (
 	CFM_SIZE          = 0x80000000
 	CFM_FACE          = 0x20000000
 	CFM_COLOR         = 0x40000000
+	CFM_HIDDEN        = 0x00000100
+	CFM_SPACING       = 0x00200000
+	CFE_HIDDEN        = 0x0100
 	CFE_BOLD          = 0x0001
 	CFE_ITALIC        = 0x0002
 	CFE_STRIKEOUT     = 0x0008

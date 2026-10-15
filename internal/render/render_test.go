@@ -179,7 +179,7 @@ func TestHeaderLayout(t *testing.T) {
 	}
 }
 
-func TestDrawHeaderFillsWithPaper(t *testing.T) {
+func TestDrawHeaderFillsWithTheNoteColour(t *testing.T) {
 	sw := Palette(note.Mint, true)
 	l := HeaderLayout{Width: 300, Scale: 1}
 	c := NewCanvas(1, 1)
@@ -189,8 +189,8 @@ func TestDrawHeaderFillsWithPaper(t *testing.T) {
 		t.Fatalf("canvas is %v", b)
 	}
 	got := c.Img.RGBAAt(150, l.Height()/2)
-	if got != (color.RGBA{sw.Paper.R, sw.Paper.G, sw.Paper.B, 255}) {
-		t.Errorf("background = %v, want paper %v", got, sw.Paper)
+	if got != (color.RGBA{sw.Fill.R, sw.Fill.G, sw.Fill.B, 255}) {
+		t.Errorf("background = %v, want the note's colour %v", got, sw.Fill)
 	}
 }
 

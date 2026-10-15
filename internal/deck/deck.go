@@ -60,18 +60,17 @@ const (
 
 // Animation timings.
 const (
-	tabDuration   = 0.22 // seconds for one tab to fully expand
+	tabDuration   = 0.30 // seconds for one tab to fully expand
 	maxStagger    = 0.035
 	maxStaggerSum = 0.25 // cap on the total delay so large decks stay snappy
 	collapseSpeed = 1.6  // collapsing runs faster than expanding
-	liftDuration  = 0.10
 	// collapseGrace is how long the pointer may stray from the deck before
 	// it collapses, forgiving small overshoots.
 	collapseGrace = 0.35
 	// peekDelay is how long the pointer must rest on a tab before it grows
-	// into a card, so that sweeping across the deck opens nothing.
-	peekDelay    = 0.35
-	growDuration = 0.20
+	// into a card: too short to notice, but long enough that a quick sweep
+	// across the deck opens nothing.
+	peekDelay = 0.07
 	// relaxSpeed is how fast, in device-independent pixels per second, the
 	// deck slides back to its home once no card is open.
 	relaxSpeed = 1400.0
@@ -192,8 +191,10 @@ type Deck struct {
 	measure func(it Item, scale float64) float64
 	// cardHeights caches measure for every item; nil when stale.
 	cardHeights []float64
-	// grow holds the card animation state per tab.
-	grow []float64
+	// grow holds the card animation state per tab, and growV its velocity.
+	grow, growV []float64
+	// liftV is the velocity of each entry of lift.
+	liftV []float64
 	// peekID is the note whose tab is, or is growing into, a card.
 	peekID string
 	// dwellID is the tab the pointer is resting on, and dwell for how long.
@@ -229,6 +230,7 @@ func (d *Deck) SetItems(items []Item) {
 		}
 	}
 	d.grow = make([]float64, len(items))
+	d.growV = make([]float64, len(items))
 	for i, it := range items {
 		d.grow[i] = grown[it.ID]
 	}
@@ -240,6 +242,7 @@ func (d *Deck) SetItems(items []Item) {
 	copy(lift[:len(items)], d.lift[:len(d.lift)-1])
 	lift[len(items)] = d.lift[len(d.lift)-1]
 	d.lift = lift
+	d.liftV = make([]float64, len(lift))
 	d.clock = min(d.clock, d.timelineEnd())
 	d.clampScroll()
 }
@@ -436,8 +439,10 @@ func (d *Deck) Advance(dt time.Duration) bool {
 			!isTab && hit.Kind == HitAdd:
 			want = 1
 		}
-		if v := approach(d.lift[i], want, sec/liftDuration); v != d.lift[i] {
-			d.lift[i] = v
+		if i >= len(d.liftV) {
+			d.liftV = make([]float64, len(d.lift))
+		}
+		if fastSpatial.step(&d.lift[i], &d.liftV[i], want, sec) {
 			changed = true
 		}
 	}
@@ -503,8 +508,7 @@ func (d *Deck) updateCards(sec float64) bool {
 		if i == p {
 			want = 1
 		}
-		if v := approach(d.grow[i], want, sec/growDuration); v != d.grow[i] {
-			d.grow[i] = v
+		if defaultSpatial.step(&d.grow[i], &d.growV[i], want, sec) {
 			changed = true
 		}
 	}
@@ -621,7 +625,10 @@ func (d *Deck) Idle() bool {
 	if d.open || d.held || d.clock > 0 || d.stale {
 		return false
 	}
-	for _, l := range d.lift {
+	for i, l := range d.lift {
+		if i < len(d.liftV) && d.liftV[i] != 0 {
+			return false
+		}
 		if l > 0 {
 			return false
 		}
@@ -735,7 +742,7 @@ func (d *Deck) timelineEnd() float64 {
 // progress returns how far element i has expanded, from 0 to 1. Index
 // len(items) refers to the add button.
 func (d *Deck) progress(i int) float64 {
-	return easeOutCubic((d.clock - float64(i)*d.stagger()) / tabDuration)
+	return EmphasizedDecelerate((d.clock - float64(i)*d.stagger()) / tabDuration)
 }
 
 // contentHeight is the height of the expanded tabs plus the add button.
@@ -842,8 +849,9 @@ func (d *Deck) growth(i int) float64 {
 	if i >= len(d.grow) {
 		return 0
 	}
-	t := clamp(d.grow[i], 0, 1)
-	return t * t * (3 - 2*t)
+	// The spring may overshoot a little past a full card, which reads as
+	// the card settling into place, but never shrinks a tab below its size.
+	return max(d.grow[i], 0)
 }
 
 // cardHeight is the full height of tab i's card in pixels.

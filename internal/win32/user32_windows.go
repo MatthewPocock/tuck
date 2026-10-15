@@ -64,6 +64,10 @@ var (
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procSetTimer                      = user32.NewProc("SetTimer")
 	procSetWindowPos                  = user32.NewProc("SetWindowPos")
+	procSetWindowRgn                  = user32.NewProc("SetWindowRgn")
+	procGetFocus                      = user32.NewProc("GetFocus")
+	procGetWindowLongPtrW             = user32.NewProc("GetWindowLongPtrW")
+	procSetLayeredWindowAttributes    = user32.NewProc("SetLayeredWindowAttributes")
 	procShowWindow                    = user32.NewProc("ShowWindow")
 	procTrackMouseEvent               = user32.NewProc("TrackMouseEvent")
 	procTrackPopupMenu                = user32.NewProc("TrackPopupMenu")
@@ -272,8 +276,14 @@ func KillTimer(hwnd HWND, id uintptr) {
 // UpdateLayeredWindow replaces the contents of a layered window with the
 // premultiplied 32-bit bitmap selected into src.
 func UpdateLayeredWindow(hwnd HWND, size SIZE, src HDC) error {
+	return UpdateLayeredWindowAlpha(hwnd, size, src, 255)
+}
+
+// UpdateLayeredWindowAlpha is UpdateLayeredWindow with the whole window
+// faded to opacity alpha.
+func UpdateLayeredWindowAlpha(hwnd HWND, size SIZE, src HDC, alpha uint8) error {
 	var origin POINT
-	blend := BLENDFUNCTION{BlendOp: AC_SRC_OVER, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA}
+	blend := BLENDFUNCTION{BlendOp: AC_SRC_OVER, SourceConstantAlpha: alpha, AlphaFormat: AC_SRC_ALPHA}
 	r, _, err := procUpdateLayeredWindow.Call(
 		uintptr(hwnd), 0, 0,
 		uintptr(unsafe.Pointer(&size)),
@@ -287,6 +297,42 @@ func UpdateLayeredWindow(hwnd HWND, size SIZE, src HDC) error {
 		return callErr("UpdateLayeredWindow", err)
 	}
 	return nil
+}
+
+// SetWindowRgn clips a window to a region, or removes the clipping when rgn
+// is zero. The system takes ownership of the region.
+func SetWindowRgn(hwnd HWND, rgn HRGN, redraw bool) {
+	var r uintptr
+	if redraw {
+		r = 1
+	}
+	procSetWindowRgn.Call(uintptr(hwnd), uintptr(rgn), r)
+}
+
+// ExStyle returns a window's extended style.
+func ExStyle(hwnd HWND) uint32 {
+	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE, -20
+	r, _, _ := procGetWindowLongPtrW.Call(uintptr(hwnd), gwlExStyle)
+	return uint32(r)
+}
+
+// SetExStyle changes a window's extended style.
+func SetExStyle(hwnd HWND, style uint32) {
+	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE, -20
+	procSetWindowLongPtrW.Call(uintptr(hwnd), gwlExStyle, uintptr(style))
+}
+
+// SetLayeredAlpha fades a layered window that paints itself normally to
+// opacity alpha.
+func SetLayeredAlpha(hwnd HWND, alpha uint8) {
+	const lwaAlpha = 2
+	procSetLayeredWindowAttributes.Call(uintptr(hwnd), 0, uintptr(alpha), lwaAlpha)
+}
+
+// GetFocus returns the window of this thread that has the keyboard focus.
+func GetFocus() HWND {
+	r, _, _ := procGetFocus.Call()
+	return HWND(r)
 }
 
 func GetDC(hwnd HWND) HDC {

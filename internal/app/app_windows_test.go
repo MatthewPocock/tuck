@@ -38,8 +38,9 @@ func newTestAppIn(t *testing.T, dir string) *App {
 		version: "test",
 		paths: paths{dir: dir, config: filepath.Join(dir, "config.json"), notes: filepath.Join(dir, "notes"),
 			session: filepath.Join(dir, "session.json")},
-		cfg:  config.Default(),
-		inst: win32.ModuleHandle(),
+		cfg:     config.Default(),
+		inst:    win32.ModuleHandle(),
+		instant: true,
 	}
 	var err error
 	if a.store, err = store.Open(a.paths.notes); err != nil {
@@ -471,10 +472,6 @@ func TestHeaderButtons(t *testing.T) {
 	click(render.ButtonPin)
 	if !a.editor.pinned {
 		t.Fatal("pin button did not pin the editor")
-	}
-	click(render.ButtonColor)
-	if n.Color != note.Sky.Next() {
-		t.Errorf("colour button left the colour at %q", n.Color)
 	}
 	click(render.ButtonClose)
 	if a.editor.shown {

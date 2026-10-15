@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/MatthewPocock/tuck/internal/deck"
 	"github.com/MatthewPocock/tuck/internal/markdown"
 	"github.com/MatthewPocock/tuck/internal/render"
 	"github.com/MatthewPocock/tuck/internal/win32"
@@ -33,9 +34,12 @@ var headingScale = map[markdown.Style]float64{
 }
 
 // restyle shows the note's Markdown: headings larger, emphasis in bold or
-// italics, finished tasks struck through, and the syntax itself fainter. Only
-// the display changes; the text stays plain. It also resets any formatting
-// that pasting or a stray shortcut may have introduced.
+// italics, finished tasks struck through, tasks and bullets as drawn boxes
+// and dots. The syntax itself is hidden except on the lines being edited,
+// where it shows faintly, and the title line moves up into the header while
+// the caret is elsewhere. Only the display changes; the text stays plain. It
+// also resets any formatting that pasting or a stray shortcut may have
+// introduced.
 func (e *editorWindow) restyle() {
 	if !e.rich || e.note == nil {
 		return
@@ -46,8 +50,12 @@ func (e *editorWindow) restyle() {
 
 	// Styling works on the selection, so remember what the user had
 	// selected and where the view was scrolled, and hide the work from the
-	// screen and from undo.
-	win32.SendMessage(e.edit, win32.WM_SETREDRAW, 0, 0)
+	// screen and from undo. WM_SETREDRAW would show a hidden control, such
+	// as the text of a folded note, so leave that alone.
+	visible := win32.IsWindowVisible(e.edit)
+	if visible {
+		win32.SendMessage(e.edit, win32.WM_SETREDRAW, 0, 0)
+	}
 	e.doc.SuspendUndo()
 	var sel win32.CHARRANGE
 	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
@@ -55,13 +63,25 @@ func (e *editorWindow) restyle() {
 	win32.SendMessage(e.edit, win32.EM_GETSCROLLPOS, 0, uintptr(unsafe.Pointer(&scroll)))
 
 	e.setFormat(win32.SCF_ALL, e.baseFormat())
+	// A little room after each line, as in the deck's cards, keeps lists
+	// easy to scan.
+	e.paraSpacing(0, -1, e.fontTwips(paraSpacing))
 
 	text := e.text()
 	pos := utf16Offsets(text)
+	e.editRange, e.revealOn = e.editingLines(text, sel)
+	e.marks = e.marks[:0]
 	if len(text) <= maxStyledChars {
 		for _, sp := range markdown.Spans(text) {
-			e.formatRange(pos[sp.Start], pos[sp.End], e.spanFormat(sp.Style))
+			f := e.spanFormat(sp.Style)
+			if sp.Style == markdown.Muted && !e.revealed(sp.Start, sp.End) {
+				// Syntax away from the caret: **, _, `, # and the like.
+				f = e.collapsed()
+			}
+			e.formatRange(pos[sp.Start], pos[sp.End], f)
 		}
+		e.drawnMarks(text, pos)
+		e.titleInHeader(text, pos)
 	}
 	var emoji win32.CHARFORMAT
 	emoji.Mask = win32.CFM_FACE
@@ -73,8 +93,208 @@ func (e *editorWindow) restyle() {
 	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&sel)))
 	win32.SendMessage(e.edit, win32.EM_SETSCROLLPOS, 0, uintptr(unsafe.Pointer(&scroll)))
 	e.doc.ResumeUndo()
-	win32.SendMessage(e.edit, win32.WM_SETREDRAW, 1, 0)
-	win32.InvalidateRect(e.edit, nil)
+	if visible {
+		win32.SendMessage(e.edit, win32.WM_SETREDRAW, 1, 0)
+		win32.InvalidateRect(e.edit, nil)
+	}
+}
+
+// editingLines returns the byte range of the lines the selection sel
+// touches, where Markdown syntax stays visible. ok is false while the text
+// does not have the focus, when every line is shown finished.
+func (e *editorWindow) editingLines(text string, sel win32.CHARRANGE) (r [2]int, ok bool) {
+	if win32.GetFocus() != e.edit {
+		return r, false
+	}
+	a, b := byteOffset(text, int(sel.Min)), byteOffset(text, int(sel.Max))
+	r[0] = strings.LastIndexByte(text[:a], '\n') + 1
+	r[1] = len(text)
+	if i := strings.IndexByte(text[b:], '\n'); i >= 0 {
+		r[1] = b + i
+	}
+	return r, true
+}
+
+// revealed reports whether bytes start to end touch the lines being edited.
+func (e *editorWindow) revealed(start, end int) bool {
+	return e.revealOn && start <= e.editRange[1] && end >= e.editRange[0]
+}
+
+// collapsed is the format of text the editor tucks out of sight: too small
+// to take any room, in the colour of the paper. Rich edit's hidden text
+// would do the same, but it stretches selections over hidden text next to
+// them, so that deleting a line could take the hidden text with it.
+func (e *editorWindow) collapsed() win32.CHARFORMAT {
+	return win32.CHARFORMAT{
+		Mask:      win32.CFM_SIZE | win32.CFM_COLOR | win32.CFM_BOLD | win32.CFM_STRIKEOUT,
+		Height:    collapsedTwips,
+		TextColor: colorRef(e.sw.Paper),
+	}
+}
+
+// collapsedTwips is the size of collapsed text, the smallest rich edit
+// keeps.
+const collapsedTwips = 1
+
+// drawnMark is a task box or bullet that paintMarks draws over the
+// characters it stands for.
+type drawnMark struct {
+	kind       markdown.MarkKind
+	start, end int32 // character positions in the control
+	checked    bool
+}
+
+// drawnMarks makes the characters of task boxes and bullets invisible, and
+// collapses the bullet before a task's box; paintMarks draws pictures in
+// their place.
+func (e *editorWindow) drawnMarks(text string, pos []int32) {
+	invisible := win32.CHARFORMAT{
+		Mask:      win32.CFM_COLOR | win32.CFM_BOLD | win32.CFM_STRIKEOUT,
+		TextColor: colorRef(e.sw.Paper),
+	}
+	// A task's "[ ]" is set in a monospaced font, whose wider characters
+	// make room for a box a little larger than the text and a gap before the
+	// words. (Rich edit ignores letter spacing.)
+	box := invisible
+	box.Mask |= win32.CFM_FACE
+	copy(box.FaceName[:len(box.FaceName)-1], utf16.Encode([]rune(codeFont)))
+	for _, m := range markdown.Marks(text) {
+		if m.Hide[1] > m.Hide[0] {
+			e.formatRange(pos[m.Hide[0]], pos[m.Hide[1]], e.collapsed())
+		}
+		if m.Kind == markdown.TaskMark {
+			e.formatRange(pos[m.Start], pos[m.End], box)
+		} else {
+			e.formatRange(pos[m.Start], pos[m.End], invisible)
+		}
+		e.marks = append(e.marks, drawnMark{m.Kind, pos[m.Start], pos[m.End], m.Checked})
+	}
+}
+
+// titleInHeader collapses the title line, and the blank lines after it,
+// unless it is being edited: the header shows the title instead.
+func (e *editorWindow) titleInHeader(text string, pos []int32) {
+	start, end, block, ok := markdown.TitleLine(text)
+	if !ok || e.revealed(start, max(block-1, end)) {
+		return
+	}
+	// The line breaks collapse too, which leaves each line a sliver.
+	e.formatRange(pos[start], pos[block], e.collapsed())
+	e.paraSpacing(pos[start], pos[block], 0)
+}
+
+// paraSpacing sets the space after the paragraphs from character min to max
+// (-1 for the end) in twips.
+func (e *editorWindow) paraSpacing(min, max, twips int32) {
+	r := win32.CHARRANGE{Min: min, Max: max}
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&r)))
+	p := win32.PARAFORMAT{Mask: win32.PFM_SPACEAFTER, SpaceAfter: twips}
+	p.Size = uint32(unsafe.Sizeof(p))
+	win32.SendMessage(e.edit, win32.EM_SETPARAFORMAT, 0, uintptr(unsafe.Pointer(&p)))
+}
+
+// paraSpacing is the space after each paragraph, in ems.
+const paraSpacing = 0.4
+
+// selectionMoved restyles the text when the caret moved to other lines,
+// revealing the syntax there and hiding it where the caret was.
+func (e *editorWindow) selectionMoved() {
+	if !e.rich || e.loading || e.note == nil {
+		return
+	}
+	var sel win32.CHARRANGE
+	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+	if r, on := e.editingLines(e.text(), sel); r != e.editRange || on != e.revealOn {
+		e.restyle()
+		return
+	}
+	// Selecting repaints text without a WM_PAINT; draw the marks again.
+	e.paintMarks()
+}
+
+// paintMarks draws task boxes and bullets over their hidden characters.
+func (e *editorWindow) paintMarks() {
+	if !e.rich || len(e.marks) == 0 || !win32.IsWindowVisible(e.edit) {
+		return
+	}
+	dc := win32.GetDC(e.edit)
+	defer win32.ReleaseDC(e.edit, dc)
+	client := win32.GetClientRect(e.edit)
+	em := float64(e.app.cfg.FontSize) * 96 / 72 * e.scale
+	line := em * lineHeight
+	for _, m := range e.marks {
+		var a, b win32.POINT
+		win32.SendMessage(e.edit, win32.EM_POSFROMCHAR, uintptr(unsafe.Pointer(&a)), uintptr(m.start))
+		win32.SendMessage(e.edit, win32.EM_POSFROMCHAR, uintptr(unsafe.Pointer(&b)), uintptr(m.end))
+		if float64(a.Y)+line < 0 || a.Y > client.Bottom {
+			continue
+		}
+		if b.Y != a.Y || b.X <= a.X {
+			b.X = a.X + int32(em) // the marker wrapped onto the next line
+		}
+		size := int32(math.Round(em * boxSize))
+		x := a.X
+		if m.kind == markdown.BulletMark {
+			size = int32(math.Round(em * 0.6))
+			x = (a.X+b.X)/2 - size/2
+		}
+		img := e.markImage(m, size, em)
+		if img == nil {
+			continue
+		}
+		y := a.Y + int32(math.Round(line/2)) - size/2
+		win32.BitBlt(dc, x, y, size, size, img.DC, 0, 0)
+	}
+}
+
+// Sizes in ems: the height of a line of Segoe UI, which rich edit uses for
+// the editor's text, and a task's box.
+const (
+	lineHeight = 1.33
+	boxSize    = 1.08
+)
+
+type markKey struct {
+	kind    markdown.MarkKind
+	checked bool
+	size    int32
+}
+
+// markImage renders a task box or bullet on the note's paper, cached until
+// the theme or scale changes.
+func (e *editorWindow) markImage(m drawnMark, size int32, em float64) *win32.DIB {
+	key := markKey{m.kind, m.checked, size}
+	if img, ok := e.markImages[key]; ok {
+		return img
+	}
+	c := render.NewCanvas(int(size), int(size))
+	c.Fill(e.sw.Paper)
+	f := float64(size)
+	if m.kind == markdown.TaskMark {
+		inset := math.Max(0.5, f*0.04)
+		render.DrawTaskBox(c, deck.Rect{X: inset, Y: inset, W: f - 2*inset, H: f - 2*inset}, m.checked, e.sw, 1)
+	} else {
+		render.DrawBullet(c, f/2, f/2, em/12.5, e.sw, 1)
+	}
+	dib, err := win32.NewDIB(int(size), int(size))
+	if err != nil {
+		return nil
+	}
+	dib.CopyFrom(c.Img)
+	if e.markImages == nil {
+		e.markImages = map[markKey]*win32.DIB{}
+	}
+	e.markImages[key] = dib
+	return dib
+}
+
+// dropMarkImages frees the cached pictures after a change of colour or
+// scale.
+func (e *editorWindow) dropMarkImages() {
+	for _, dib := range e.markImages {
+		dib.Close()
+	}
+	e.markImages = nil
 }
 
 func (e *editorWindow) formatRange(min, max int32, f win32.CHARFORMAT) {
@@ -134,7 +354,7 @@ func (e *editorWindow) fontTwips(scale float64) int32 {
 func (e *editorWindow) baseFormat() win32.CHARFORMAT {
 	f := win32.CHARFORMAT{
 		Mask: win32.CFM_BOLD | win32.CFM_ITALIC | win32.CFM_STRIKEOUT | win32.CFM_UNDERLINE |
-			win32.CFM_OFFSET | win32.CFM_COLOR | win32.CFM_SIZE | win32.CFM_FACE,
+			win32.CFM_OFFSET | win32.CFM_COLOR | win32.CFM_SIZE | win32.CFM_FACE | win32.CFM_HIDDEN,
 		Height:    e.fontTwips(1),
 		TextColor: colorRef(e.sw.Text),
 	}
@@ -269,6 +489,19 @@ func editProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 		return 0
 	}
 	switch msg {
+	case win32.WM_PAINT:
+		r := win32.CallWindowProc(e.editProc, hwnd, msg, wp, lp)
+		e.paintMarks()
+		return r
+	case win32.WM_SETFOCUS, win32.WM_KILLFOCUS:
+		r := win32.CallWindowProc(e.editProc, hwnd, msg, wp, lp)
+		// Syntax shows only while the note is being edited.
+		e.selectionMoved()
+		return r
+	case win32.WM_VSCROLL, win32.WM_MOUSEWHEEL:
+		r := win32.CallWindowProc(e.editProc, hwnd, msg, wp, lp)
+		e.paintMarks()
+		return r
 	case win32.WM_SETCURSOR:
 		if win32.LoWord(lp) == win32.HTCLIENT {
 			if pt, ok := win32.GetCursorPos(); ok {
