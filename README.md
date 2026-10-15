@@ -10,9 +10,9 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
 
 ![The deck at rest, fanning out, fully open and with a note selected](docs/deck.png)
 
-> **Status: early.** Tuck has been tested on real Windows 10 hardware (4K,
-> 125% scaling) as well as through its test suite and under Wine, but not yet
-> used day-to-day. Expect rough edges, and please [report them](../../issues).
+> **Status: first release.** Tuck is young. It is used and tested on Windows
+> 10 at 4K and 125% scaling, and through its test suite, but expect some rough
+> edges, and please [report them](../../issues).
 
 ## Features
 
@@ -25,10 +25,11 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
 - **Peek without opening** – rest the pointer on a tab and it grows into a
   card showing the rest of the note, ticked tasks and all, while the tabs
   below make room. The app you are working in keeps the focus.
-- **Click to write** – the note opens next to its tab, in a clean borderless
-  window tinted in the note's colour. Saves as you type.
-- **Never steals focus** – hovering and clicking the deck does not deactivate
-  the app you are working in.
+- **Click to write** – the note slides out beside its tab, with a header in
+  its colour, rounded corners and a soft shadow. It saves as you type and
+  tucks itself away when you turn to something else.
+- **Never steals focus** – the deck never takes the keyboard from the app you
+  are working in; only opening a note to write in it does.
 - **Pin as many as you like** – pin a note, or just drag it somewhere, and it
   stays on top while you work. Open another and it gets a window of its own;
   pinned notes come back where you left them when Tuck restarts.
@@ -54,13 +55,20 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
   in two places at once, both versions are kept.
 - **Crisp on every display** – per-monitor DPI aware.
 
+![A note in the light and dark themes](docs/note.png)
+
 ## Install
 
-Download `tuck.exe` from the [releases page](../../releases) and run it. That
-is the whole installation. To have it start with Windows, right-click the tray
-icon and tick **Start with Windows**.
+Download `tuck.exe` from the [latest release](../../releases/latest) and run
+it. That is the whole installation. To have it start with Windows,
+right-click the tray icon and tick **Start with Windows**.
 
-Requires 64-bit Windows 10 or 11 (x64 or ARM64).
+Requires 64-bit Windows 10 or 11. For Windows on ARM, download
+`tuck-arm64.exe` instead.
+
+Tuck is not code-signed, so the first time you run it Windows SmartScreen may
+say it "protected your PC". Choose **More info → Run anyway**. Each release
+lists the SHA-256 checksums of its files in `checksums.txt`.
 
 ### Build from source
 
@@ -74,7 +82,7 @@ This works from Windows, macOS and Linux alike; all you need is
 [Go](https://go.dev/dl/). On Windows without `make`:
 
 ```powershell
-go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
+go build -trimpath -ldflags "-H=windowsgui -s -w" -o tuck.exe ./cmd/tuck
 ```
 
 ## Using Tuck
@@ -83,6 +91,7 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | --- | --- |
 | Hover the pill at the screen edge | Fan out the deck |
 | Rest the pointer on a tab | Preview the note in the deck |
+| Rest on another tab while a note is open | Put the open note away and preview the other |
 | Click a tab | Open that note (click again to close it) |
 | Click **+** | Start a new note |
 | Right-click a tab, or click ⋯ in a note | Change colour, fold, copy, archive or delete |
@@ -91,7 +100,8 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | Drag the note's header | Move it — it stays pinned where you drop it |
 | Double-click the note's header | Fold it to its title bar, or unfold it |
 | Click the pin | Keep the note on screen; other notes open beside it |
-| Click a `[ ]` box | Tick a task off (or back on) |
+| Click a task's box | Tick it off (or back on) |
+| Click **+ Add item** under a list | Start a new task |
 
 ![Notes previewed in the deck, in the light and dark themes](docs/cards.png)
 
@@ -196,7 +206,12 @@ idle without using the CPU.
   to Windows as-is.
 - The **editor** is a borderless window with a custom-drawn header and a
   native rich edit control for the text, so IME input, undo, selection and
-  screen readers all behave the way Windows users expect.
+  screen readers all behave the way Windows users expect. Task boxes and
+  bullets are drawn over the text; on Windows 10, which neither rounds nor
+  shadows such windows, a click-through layer behind the note draws its
+  shadow and smooth corners.
+- Motion follows [Material Design](https://m3.material.io/styles/motion):
+  cards and tabs move on springs and windows use its emphasized easing.
 - Everything that can be decided without Windows — layout, animation, hit
   testing, drawing, storage — lives in portable packages with unit tests. You
   can even render the UI to PNG on macOS or Linux with `make preview`.
@@ -217,7 +232,8 @@ Ideas that are not done yet — contributions welcome:
 ## Acknowledgements
 
 The edge-deck interaction is inspired by
-[Hold My Notes](https://holdmynotes.app) for macOS.
+[Hold My Notes](https://holdmynotes.app) and the previews by
+[SideNotes](https://www.apptorium.com/sidenotes), both for macOS.
 
 ## License
 

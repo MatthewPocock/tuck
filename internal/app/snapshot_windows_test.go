@@ -160,6 +160,11 @@ func TestScreenSnapshot(t *testing.T) {
 		backdrop := solidWindow(t, a, area, desktop)
 		a.openNote(n.ID)
 		a.editor.setPinned(true)
+		if theme == config.ThemeDark {
+			a.setColor(n.ID, note.Lilac)
+		} else {
+			a.setColor(n.ID, note.Yellow)
+		}
 		win32.SetWindowPos(a.editor.hwnd, win32.HWND_TOPMOST, at.Left, at.Top, at.Width(), at.Height(), win32.SWP_NOACTIVATE)
 		// Put the caret on the last line, as when typing there.
 		end := win32.SendMessage(a.editor.edit, win32.WM_GETTEXTLENGTH, 0, 0)
