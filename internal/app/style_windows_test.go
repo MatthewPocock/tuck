@@ -12,7 +12,13 @@ import (
 
 // formatAt returns the formatting of the character at a rich edit position.
 func formatAt(a *App, char int32) win32.CHARFORMAT {
-	r := win32.CHARRANGE{Min: char, Max: char + 1}
+	return formatOf(a, char, char+1)
+}
+
+// formatOf returns the formatting of a range of the text, which should be
+// uniform.
+func formatOf(a *App, min, max int32) win32.CHARFORMAT {
+	r := win32.CHARRANGE{Min: min, Max: max}
 	win32.SendMessage(a.editor.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&r)))
 	var f win32.CHARFORMAT
 	f.Size = uint32(unsafe.Sizeof(f))
@@ -109,5 +115,30 @@ func TestStyledNoteIsSavedAsPlainMarkdown(t *testing.T) {
 	}
 	if !strings.HasSuffix(string(data), "\n\n# Plan\n- [ ] **ship** it\n") {
 		t.Errorf("saved file:\n%s", data)
+	}
+}
+
+func TestEmojiKeepTheEmojiFont(t *testing.T) {
+	a := openRich(t, "ship it 🚀 **now** 👍🏽")
+	text := a.editor.text()
+	for _, emoji := range []string{"🚀", "👍🏽"} {
+		start := strings.Index(text, emoji)
+		pos := utf16Offsets(text)
+		f := formatOf(a, pos[start], pos[start+len(emoji)])
+		if face := win32.UTF16ToString(f.FaceName[:]); face != emojiFont {
+			t.Errorf("%s is drawn with %q; it would show as a box", emoji, face)
+		}
+	}
+	plain := formatAt(a, 0)
+	if face := win32.UTF16ToString(plain.FaceName[:]); face != uiFont {
+		t.Errorf("text is drawn with %q", face)
+	}
+}
+
+func TestEmojiRuns(t *testing.T) {
+	text := "a 👍🏽 b ❤️ c"
+	runs := emojiRuns(text)
+	if len(runs) != 2 || text[runs[0][0]:runs[0][1]] != "👍🏽" || text[runs[1][0]:runs[1][1]] != "❤️" {
+		t.Errorf("emojiRuns(%q) = %v", text, runs)
 	}
 }

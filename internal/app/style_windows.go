@@ -17,6 +17,9 @@ import (
 const (
 	// codeFont is used for `code` spans. Consolas ships with Windows.
 	codeFont = "Consolas"
+	// emojiFont has the emoji. Setting the font of the whole text, as
+	// restyle does, overrides the font the control picked for them itself.
+	emojiFont = "Segoe UI Emoji"
 	// maxStyledChars bounds the work done on every keystroke: longer notes
 	// are shown without Markdown styling.
 	maxStyledChars = 100_000
@@ -54,13 +57,17 @@ func (e *editorWindow) restyle() {
 	e.setFormat(win32.SCF_ALL, e.baseFormat())
 
 	text := e.text()
+	pos := utf16Offsets(text)
 	if len(text) <= maxStyledChars {
-		pos := utf16Offsets(text)
 		for _, sp := range markdown.Spans(text) {
-			r := win32.CHARRANGE{Min: pos[sp.Start], Max: pos[sp.End]}
-			win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&r)))
-			e.setFormat(win32.SCF_SELECTION, e.spanFormat(sp.Style))
+			e.formatRange(pos[sp.Start], pos[sp.End], e.spanFormat(sp.Style))
 		}
+	}
+	var emoji win32.CHARFORMAT
+	emoji.Mask = win32.CFM_FACE
+	copy(emoji.FaceName[:len(emoji.FaceName)-1], utf16.Encode([]rune(emojiFont)))
+	for _, run := range emojiRuns(text) {
+		e.formatRange(pos[run[0]], pos[run[1]], emoji)
 	}
 
 	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&sel)))
@@ -68,6 +75,48 @@ func (e *editorWindow) restyle() {
 	e.doc.ResumeUndo()
 	win32.SendMessage(e.edit, win32.WM_SETREDRAW, 1, 0)
 	win32.InvalidateRect(e.edit, nil)
+}
+
+func (e *editorWindow) formatRange(min, max int32, f win32.CHARFORMAT) {
+	r := win32.CHARRANGE{Min: min, Max: max}
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&r)))
+	e.setFormat(win32.SCF_SELECTION, f)
+}
+
+// emojiRuns returns the byte ranges of text made of emoji, including the
+// joiners, variation selectors and modifiers that combine them.
+func emojiRuns(text string) [][2]int {
+	var runs [][2]int
+	start := -1
+	for i, r := range text {
+		switch {
+		case isEmoji(r):
+			if start < 0 {
+				start = i
+			}
+		case start >= 0:
+			runs = append(runs, [2]int{start, i})
+			start = -1
+		}
+	}
+	if start >= 0 {
+		runs = append(runs, [2]int{start, len(text)})
+	}
+	return runs
+}
+
+func isEmoji(r rune) bool {
+	switch {
+	case r >= 0x1F000 && r <= 0x1FAFF, // pictographs, flags, skin tones
+		r >= 0x2600 && r <= 0x27BF,   // symbols and dingbats
+		r >= 0x2B00 && r <= 0x2BFF,   // stars, squares, arrows
+		r >= 0x2300 && r <= 0x23FF,   // watch, hourglass, media controls
+		r == 0x200D,                  // zero width joiner
+		r >= 0xFE00 && r <= 0xFE0F,   // variation selectors
+		r >= 0xE0020 && r <= 0xE007F: // tag sequences
+		return true
+	}
+	return false
 }
 
 func (e *editorWindow) setFormat(scope uintptr, f win32.CHARFORMAT) {
