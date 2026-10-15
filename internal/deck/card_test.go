@@ -29,14 +29,12 @@ func TestRestingOnATabGrowsItsCard(t *testing.T) {
 	d := cardDeck(4)
 	before := d.Frame().Tabs
 
-	rest(d, 1, 40*time.Millisecond)
-	if d.Peeked() != "" {
-		t.Fatal("the card opened before the pointer had settled")
+	// The card opens within a few frames of the pointer coming to rest.
+	rest(d, 1, 50*time.Millisecond)
+	if d.Peeked() != "b" {
+		t.Fatalf("peeked %q, want b straight away", d.Peeked())
 	}
 	run(d, time.Second)
-	if d.Peeked() != "b" {
-		t.Fatalf("peeked %q, want b", d.Peeked())
-	}
 	tabs := d.Frame().Tabs
 	if tabs[1].Rect.H != testCard || tabs[1].Rect.W != CardWidth || tabs[1].Grow != 1 {
 		t.Errorf("card is %+v, grow %v", tabs[1].Rect, tabs[1].Grow)
@@ -54,9 +52,12 @@ func TestRestingOnATabGrowsItsCard(t *testing.T) {
 
 func TestSweepingAcrossTabsOpensNothing(t *testing.T) {
 	d := cardDeck(6)
-	// A quick sweep spends a few frames on each tab.
-	for i := range 6 {
-		rest(d, i, 40*time.Millisecond)
+	// Sweep the pointer down the deck at an unhurried 600 pixels a second.
+	first := d.Frame().Tabs[0].Rect
+	x := int(first.X + first.W/2)
+	for y := first.Y; y < d.Frame().Tabs[5].Rect.Y; y += 600 * frame.Seconds() {
+		d.Pointer(x, int(y), true)
+		d.Advance(frame)
 	}
 	if d.Peeked() != "" && d.Peeked() != "f" {
 		t.Errorf("peeked %q while sweeping", d.Peeked())
@@ -161,5 +162,19 @@ func TestInsetKeepsTheDeckInPlace(t *testing.T) {
 	inset := float64(cards.Inset())
 	if got, want := cards.Frame().Pill.Y-inset, plain.Frame().Pill.Y; got != want {
 		t.Errorf("pill at %v within the home area, want %v", got, want)
+	}
+}
+
+func TestJitteryPointerStillOpensACard(t *testing.T) {
+	d := cardDeck(3)
+	r := d.Frame().Tabs[1].Rect
+	x, y := int(r.X+r.W/2), int(r.Y+r.H/2)
+	// A hand that never keeps still: a few pixels back and forth each frame.
+	for i := range 20 {
+		d.Pointer(x+(i%2)*6, y, true)
+		d.Advance(frame)
+	}
+	if d.Peeked() != "b" {
+		t.Error("the card never opened under a pointer that kept wobbling")
 	}
 }

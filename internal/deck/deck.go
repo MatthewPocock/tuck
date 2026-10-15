@@ -13,6 +13,7 @@
 package deck
 
 import (
+	"math"
 	"time"
 
 	"github.com/MatthewPocock/tuck/internal/note"
@@ -67,10 +68,14 @@ const (
 	// collapseGrace is how long the pointer may stray from the deck before
 	// it collapses, forgiving small overshoots.
 	collapseGrace = 0.35
-	// peekDelay is how long the pointer must rest on a tab before it grows
-	// into a card: too short to notice, but long enough that a quick sweep
-	// across the deck opens nothing.
-	peekDelay = 0.07
+	// A tab grows into a card as soon as the pointer settles on it: once it
+	// has moved slower than settleSpeed (device-independent pixels per
+	// second) for settleTime, which takes a couple of frames. A pointer
+	// sweeping past is faster than that and opens nothing. A hand that never
+	// quite keeps still still opens the card after peekDelay.
+	settleSpeed = 120.0
+	settleTime  = 0.025
+	peekDelay   = 0.15
 	// relaxSpeed is how fast, in device-independent pixels per second, the
 	// deck slides back to its home once no card is open.
 	relaxSpeed = 1400.0
@@ -179,7 +184,11 @@ type Deck struct {
 	scroll float64
 
 	pointerX, pointerY float64
-	pointerIn          bool
+	// lastX and lastY are where the pointer was at the previous Advance, and
+	// still how long it has been settled.
+	lastX, lastY float64
+	still        float64
+	pointerIn    bool
 
 	// stale is set when something changed that the next Advance must report
 	// even though no animation is running, such as which tab is active.
@@ -446,6 +455,7 @@ func (d *Deck) Advance(dt time.Duration) bool {
 			changed = true
 		}
 	}
+	d.trackSettling(wait)
 	if d.updatePeek(wait, hit) {
 		changed = true
 	}
@@ -453,6 +463,20 @@ func (d *Deck) Advance(dt time.Duration) bool {
 		changed = true
 	}
 	return changed
+}
+
+// trackSettling measures whether the pointer has come to rest.
+func (d *Deck) trackSettling(sec float64) {
+	dx, dy := d.pointerX-d.lastX, d.pointerY-d.lastY
+	d.lastX, d.lastY = d.pointerX, d.pointerY
+	if sec <= 0 {
+		return
+	}
+	if math.Hypot(dx, dy)/sec < settleSpeed*d.scale {
+		d.still += sec
+	} else {
+		d.still = 0
+	}
 }
 
 // updatePeek decides which tab, if any, should be a card. It reports
@@ -478,7 +502,7 @@ func (d *Deck) updatePeek(sec float64, hit Hit) bool {
 		if over != d.dwellID {
 			d.dwellID, d.dwell = over, 0
 		}
-		if d.dwell += sec; d.dwell >= peekDelay {
+		if d.dwell += sec; d.dwell >= peekDelay || d.still >= settleTime {
 			d.peekID, d.dwellID = over, ""
 		}
 	default:
