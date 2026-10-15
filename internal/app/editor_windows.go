@@ -113,6 +113,7 @@ type editorWindow struct {
 	// marks are the task boxes and bullets drawn over the text, and
 	// markImages their pictures.
 	marks      []drawnMark
+	addRows    []addRow
 	markImages map[markKey]*win32.DIB
 
 	// entering is set while the window animates open toward enterRect,
@@ -590,6 +591,9 @@ func (e *editorWindow) paint() {
 
 	body := win32.RECT{Top: int32(h), Right: client.Right, Bottom: client.Bottom}
 	win32.FillRect(dc, &body, e.paper)
+	if !e.folded {
+		e.paintGrip(dc, client)
+	}
 
 	if e.drawBorder && e.shadow == nil {
 		// The text control is inset from every edge, so a hairline drawn
@@ -604,6 +608,29 @@ func (e *editorWindow) paint() {
 			win32.FillRect(dc, &r, e.border)
 		}
 	}
+}
+
+// paintGrip draws the two short diagonal strokes in the bottom-right corner
+// that show the note can be resized.
+func (e *editorWindow) paintGrip(dc win32.HDC, client win32.RECT) {
+	size := e.px(14)
+	c := render.NewCanvas(int(size), int(size))
+	c.Fill(e.sw.Paper)
+	s := e.scale
+	f := float64(size)
+	col := render.WithAlpha(e.sw.Text, 0.3)
+	for _, d := range []float64{5, 10} {
+		c.Line(f-1.5*s, f-1.5*s-d*s, f-1.5*s-d*s, f-1.5*s, math.Max(1, 1.1*s), col)
+	}
+	dib, err := win32.NewDIB(int(size), int(size))
+	if err != nil {
+		return
+	}
+	defer dib.Close()
+	dib.CopyFrom(c.Img)
+	// Inset enough to clear the rounded corner.
+	inset := e.px(5)
+	win32.BitBlt(dc, client.Right-inset-size, client.Bottom-inset-size, size, size, dib.DC, 0, 0)
 }
 
 func (e *editorWindow) invalidateHeader() {

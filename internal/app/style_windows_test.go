@@ -189,3 +189,27 @@ func TestEmojiRuns(t *testing.T) {
 		t.Errorf("emojiRuns(%q) = %v", text, runs)
 	}
 }
+
+func TestAddItemRow(t *testing.T) {
+	a := openRich(t, "Groceries\n- [ ] milk\n  - [x] eggs\n\nAfter the list")
+	e := a.editor
+	win32.UpdateWindow(e.edit)
+	if len(e.addRows) != 1 {
+		t.Fatalf("%d add rows, want one under the list", len(e.addRows))
+	}
+	r := e.addRows[0].rect
+	if r.Height() <= 0 {
+		t.Fatalf("the add row was not drawn: %+v", r)
+	}
+	pt := win32.POINT{X: r.Left + 30, Y: r.Top + r.Height()/2}
+	win32.SendMessage(e.edit, win32.WM_LBUTTONDOWN, 0, uintptr(uint32(pt.Y)<<16|uint32(pt.X)))
+	win32.SendMessage(e.edit, win32.WM_LBUTTONUP, 0, uintptr(uint32(pt.Y)<<16|uint32(pt.X)))
+	if got := e.text(); got != "Groceries\n- [ ] milk\n  - [x] eggs\n  - [ ] \n\nAfter the list" {
+		t.Errorf("after adding an item: %q", got)
+	}
+	var sel win32.CHARRANGE
+	win32.SendMessage(e.edit, win32.EM_EXGETSEL, 0, uintptr(unsafe.Pointer(&sel)))
+	if want := int32(strings.Index(e.text(), "  - [ ] \n") + len("  - [ ] ")); sel.Min != want {
+		t.Errorf("caret at %d, want %d, ready to type the item", sel.Min, want)
+	}
+}

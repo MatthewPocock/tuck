@@ -35,6 +35,16 @@ func CreateRoundRectRgn(left, top, right, bottom, ellipse int32) HRGN {
 	return HRGN(r)
 }
 
+// CaptureScreen copies a rectangle of the screen, layered windows included,
+// into dst.
+func CaptureScreen(dst HDC, r RECT) {
+	const captureBlt = 0x40000000
+	screen := GetDC(0)
+	defer ReleaseDC(0, screen)
+	procBitBlt.Call(uintptr(dst), 0, 0, uintptr(r.Width()), uintptr(r.Height()),
+		uintptr(screen), uintptr(r.Left), uintptr(r.Top), SRCCOPY|captureBlt)
+}
+
 func SelectObject(dc HDC, obj HGDIOBJ) HGDIOBJ {
 	r, _, _ := procSelectObject.Call(uintptr(dc), uintptr(obj))
 	return HGDIOBJ(r)

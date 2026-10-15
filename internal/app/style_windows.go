@@ -1,6 +1,7 @@
 package app
 
 import (
+	"image"
 	"image/color"
 	"math"
 	"strings"
@@ -158,7 +159,9 @@ func (e *editorWindow) drawnMarks(text string, pos []int32) {
 	box := invisible
 	box.Mask |= win32.CFM_FACE
 	copy(box.FaceName[:len(box.FaceName)-1], utf16.Encode([]rune(codeFont)))
-	for _, m := range markdown.Marks(text) {
+	e.addRows = e.addRows[:0]
+	marks := markdown.Marks(text)
+	for i, m := range marks {
 		if m.Hide[1] > m.Hide[0] {
 			e.formatRange(pos[m.Hide[0]], pos[m.Hide[1]], e.collapsed())
 		}
@@ -168,7 +171,66 @@ func (e *editorWindow) drawnMarks(text string, pos []int32) {
 			e.formatRange(pos[m.Start], pos[m.End], invisible)
 		}
 		e.marks = append(e.marks, drawnMark{m.Kind, pos[m.Start], pos[m.End], m.Checked})
+
+		// Lists get the roomier rows of the deck's cards, and the last
+		// task of a list a row below it for adding another.
+		start, end := lineAround(text, m.Start)
+		spacing := e.fontTwips(listSpacing)
+		next := i+1 < len(marks) && marks[i+1].Kind == markdown.TaskMark && lineStart(text, marks[i+1].Start) == end+1
+		if m.Kind == markdown.TaskMark && !next {
+			spacing = e.fontTwips(addRowHeight)
+			prefix := text[start:m.Start] + "[ ] "
+			e.addRows = append(e.addRows, addRow{line: pos[start], end: pos[end], box: pos[m.Start], prefix: prefix})
+		}
+		e.paraSpacing(pos[start], pos[end], spacing)
 	}
+}
+
+// lineAround returns the byte range of the line containing byte i, without
+// its line break.
+func lineAround(text string, i int) (start, end int) {
+	start = lineStart(text, i)
+	end = len(text)
+	if j := strings.IndexByte(text[i:], '\n'); j >= 0 {
+		end = i + j
+	}
+	return start, end
+}
+
+func lineStart(text string, i int) int {
+	return strings.LastIndexByte(text[:i], '\n') + 1
+}
+
+// addRow is the "Add item" row drawn under the last task of a list. The
+// positions are characters of the control: the task line's start and end
+// and its box.
+type addRow struct {
+	line, end, box int32
+	// prefix starts a new task like the one above: its indent and bullet
+	// and an empty box.
+	prefix string
+	// rect is where the row was last drawn, in the control's client area.
+	rect win32.RECT
+}
+
+// addRowAt returns the "Add item" row under a point of the text control.
+func (e *editorWindow) addRowAt(pt win32.POINT) (addRow, bool) {
+	for _, r := range e.addRows {
+		if pt.X >= r.rect.Left && pt.X < r.rect.Right && pt.Y >= r.rect.Top && pt.Y < r.rect.Bottom {
+			return r, true
+		}
+	}
+	return addRow{}, false
+}
+
+// addItem starts a new task after the list's last one, as an ordinary edit
+// that can be undone.
+func (e *editorWindow) addItem(r addRow) {
+	win32.SetFocus(e.edit)
+	at := win32.CHARRANGE{Min: r.end, Max: r.end}
+	win32.SendMessage(e.edit, win32.EM_EXSETSEL, 0, uintptr(unsafe.Pointer(&at)))
+	const canUndo = 1
+	win32.SendMessage(e.edit, win32.EM_REPLACESEL, canUndo, uintptr(unsafe.Pointer(win32.UTF16("\r"+r.prefix))))
 }
 
 // titleInHeader collapses the title line, and the blank lines after it,
@@ -245,25 +307,90 @@ func (e *editorWindow) paintMarks() {
 		y := a.Y + int32(math.Round(line/2)) - size/2
 		win32.BitBlt(dc, x, y, size, size, img.DC, 0, 0)
 	}
+	e.paintAddRows(dc, client, em)
+}
+
+// paintAddRows draws "+ Add item" in the room left under each task list.
+func (e *editorWindow) paintAddRows(dc win32.HDC, client win32.RECT, em float64) {
+	line := em * lineHeight
+	for i := range e.addRows {
+		r := &e.addRows[i]
+		var a, box, text win32.POINT
+		win32.SendMessage(e.edit, win32.EM_POSFROMCHAR, uintptr(unsafe.Pointer(&a)), uintptr(r.end))
+		win32.SendMessage(e.edit, win32.EM_POSFROMCHAR, uintptr(unsafe.Pointer(&box)), uintptr(r.box))
+		win32.SendMessage(e.edit, win32.EM_POSFROMCHAR, uintptr(unsafe.Pointer(&text)), uintptr(r.box+4))
+		if text.Y != box.Y || text.X <= box.X {
+			text.X = box.X + int32(math.Round(em*1.6))
+		}
+		// The row sits below the last line of the task, which may wrap,
+		// spaced like the rows of the list.
+		top := a.Y + int32(math.Round(line+em*listSpacing))
+		h := int32(math.Round(line))
+		r.rect = win32.RECT{Left: box.X, Top: top, Right: client.Right, Bottom: top + h}
+		if top > client.Bottom || top+h < 0 || r.rect.Width() <= 0 {
+			continue
+		}
+		img := e.addRowImage(r.rect.Width(), h, text.X-box.X, em)
+		if img != nil {
+			win32.BitBlt(dc, r.rect.Left, r.rect.Top, r.rect.Width(), h, img.DC, 0, 0)
+		}
+	}
+}
+
+// addRowImage renders "+ Add item" on the paper, cached like the marks.
+func (e *editorWindow) addRowImage(w, h, textX int32, em float64) *win32.DIB {
+	key := markKey{kind: addMark, size: w, h: h, x: textX}
+	if img, ok := e.markImages[key]; ok {
+		return img
+	}
+	c := render.NewCanvas(int(w), int(h))
+	c.Fill(e.sw.Paper)
+	muted := render.WithAlpha(e.sw.Text, 0.45)
+	cx, cy := em*boxSize/2, float64(h)/2
+	arm := em * 0.32
+	stroke := math.Max(1, em*0.09)
+	c.Line(cx-arm, cy, cx+arm, cy, stroke, muted)
+	c.Line(cx, cy-arm, cx, cy+arm, stroke, muted)
+	if e.app.text != nil {
+		r := image.Rect(int(textX), 0, int(w), int(h))
+		e.app.text.DrawText(c.Img, r, "Add item", render.TextStyle{Size: em, Color: muted, Opacity: 1})
+	}
+	dib, err := win32.NewDIB(int(w), int(h))
+	if err != nil {
+		return nil
+	}
+	dib.CopyFrom(c.Img)
+	if e.markImages == nil {
+		e.markImages = map[markKey]*win32.DIB{}
+	}
+	e.markImages[key] = dib
+	return dib
 }
 
 // Sizes in ems: the height of a line of Segoe UI, which rich edit uses for
-// the editor's text, and a task's box.
+// the editor's text; a task's box; the space after each line of a list; and
+// the "Add item" row under a task list.
 const (
-	lineHeight = 1.33
-	boxSize    = 1.08
+	lineHeight   = 1.33
+	boxSize      = 1.08
+	listSpacing  = 0.7
+	addRowHeight = listSpacing + lineHeight + 0.15
 )
+
+// addMark keys the cached picture of an "Add item" row.
+const addMark markdown.MarkKind = -1
 
 type markKey struct {
 	kind    markdown.MarkKind
 	checked bool
 	size    int32
+	h, x    int32
 }
 
 // markImage renders a task box or bullet on the note's paper, cached until
 // the theme or scale changes.
 func (e *editorWindow) markImage(m drawnMark, size int32, em float64) *win32.DIB {
-	key := markKey{m.kind, m.checked, size}
+	key := markKey{kind: m.kind, checked: m.checked, size: size}
 	if img, ok := e.markImages[key]; ok {
 		return img
 	}
@@ -505,13 +632,19 @@ func editProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 	case win32.WM_SETCURSOR:
 		if win32.LoWord(lp) == win32.HTCLIENT {
 			if pt, ok := win32.GetCursorPos(); ok {
-				if _, _, _, onBox := e.taskBoxAt(win32.ScreenToClient(hwnd, pt)); onBox {
+				client := win32.ScreenToClient(hwnd, pt)
+				_, onAdd := e.addRowAt(client)
+				if _, _, _, onBox := e.taskBoxAt(client); onBox || onAdd {
 					win32.SetCursor(win32.LoadCursor(win32.IDC_HAND))
 					return 1
 				}
 			}
 		}
 	case win32.WM_LBUTTONDOWN:
+		if row, ok := e.addRowAt(win32.PointFromLParam(lp)); ok {
+			e.addItem(row)
+			return 0
+		}
 		if wp&win32.MK_SHIFT == 0 {
 			if text, box, _, ok := e.taskBoxAt(win32.PointFromLParam(lp)); ok {
 				win32.SetFocus(hwnd)
