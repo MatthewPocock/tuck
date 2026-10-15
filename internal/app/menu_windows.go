@@ -30,15 +30,6 @@ func (m *menu) item(label string, action func()) {
 	m.add(label, 0, action)
 }
 
-// check adds a command with a check mark shown when checked is true.
-func (m *menu) check(label string, checked bool, action func()) {
-	var flags uint32
-	if checked {
-		flags = win32.MF_CHECKED
-	}
-	m.add(label, flags, action)
-}
-
 // image shows a picture beside the most recently added item.
 func (m *menu) image(img *image.RGBA) {
 	b := img.Bounds()
