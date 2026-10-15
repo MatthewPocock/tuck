@@ -24,8 +24,12 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
   window tinted in the note's colour. Saves as you type.
 - **Never steals focus** – hovering and clicking the deck does not deactivate
   the app you are working in.
-- **Pin when you need it** – pin a note, or just drag it somewhere, and it
-  stays on top while you work.
+- **Pin as many as you like** – pin a note, or just drag it somewhere, and it
+  stays on top while you work. Open another and it gets a window of its own;
+  pinned notes come back where you left them when Tuck restarts.
+- **Light Markdown** – headings, **bold**, _italic_, `code` and links are
+  styled as you type, and `- [ ]` tasks tick off with a click. The file
+  stays plain Markdown.
 - **Seven colours**, light and dark themes (follows Windows by default).
 - **Archive and undo** – archive notes you are done with; deleted notes go to
   a trash folder and the last one can be restored from the menu.
@@ -33,7 +37,8 @@ no account, no telemetry — your notes are plain Markdown files in a folder.
   presentation is in front.
 - **Plain files** – each note is a `.md` file. Sync the folder with OneDrive,
   Dropbox or Syncthing, edit it with any other tool, back it up however you
-  like.
+  like. Changes made elsewhere show up immediately, and if a note was edited
+  in two places at once, both versions are kept.
 - **Crisp on every display** – per-monitor DPI aware.
 
 ## Install
@@ -70,6 +75,8 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | Right-click the deck or the tray icon | Settings and everything else |
 | Scroll over the deck | Scroll when there are more notes than fit |
 | Drag the note's header | Move it — it stays pinned where you drop it |
+| Click the pin | Keep the note on screen; other notes open beside it |
+| Click a `[ ]` box | Tick a task off (or back on) |
 
 ### Keyboard
 
@@ -85,7 +92,8 @@ go build -ldflags "-H=windowsgui" -o tuck.exe ./cmd/tuck
 | `Ctrl+B` / `Ctrl+I` | Wrap the selection in Markdown bold / italic |
 | `Ctrl+Shift+Backspace` | Delete the note |
 
-Empty notes are discarded when closed, so there is nothing to clean up after
+Shortcuts that act on a note act on the one you are typing in. Empty notes
+are discarded when closed, so there is nothing to clean up after
 an accidental `Ctrl+Alt+N`.
 
 ## Your notes
@@ -107,14 +115,23 @@ Groceries for the weekend
 ```
 
 The first line becomes the note's label in the deck. Any `.md` file you drop
-into the folder shows up as a note the next time Tuck starts — front matter
-is optional. Deleted notes are moved to `notes\.trash`.
+into the folder shows up as a note straight away — front matter is optional.
+Deleted notes are moved to `notes\.trash`.
+
+If a note changes on disk while you are typing in it (say, a sync client
+delivers an edit from another computer), your version is saved and the other
+one is kept next to it as a separate note named `… (conflict <date>)`.
 
 ## Settings
 
-Most settings are in the tray menu. All of them live in
-`%AppData%\Tuck\config.json` (tray icon → **Edit settings file**; restart Tuck
-after editing by hand):
+Right-click the tray icon or the deck and choose **Settings…** to change the
+screen edge, position, theme, text size, shortcuts (click one and press the
+new keys), start-up and the notes folder. Changes apply immediately.
+
+![The settings window in the light and dark themes](docs/settings.png)
+
+Everything is stored in `%AppData%\Tuck\config.json` (**Settings… → Edit
+settings file**; restart Tuck after editing by hand):
 
 ```json
 {
@@ -168,11 +185,8 @@ Ideas that are not done yet — contributions welcome:
 
 - A deck on every monitor (today: the primary monitor)
 - Search across all notes
-- Pick up changes made to note files while Tuck is running
 - Drag to reorder notes and to move the deck along the edge
-- Several notes open at once
-- Clickable links and lightweight Markdown styling in the editor
-- A settings window, including hotkey capture
+- Colour emoji (the Windows 10 text control draws them in one colour)
 - winget / Scoop packages
 
 ## Acknowledgements

@@ -12,7 +12,7 @@ no C compiler, no SDK. Tuck cross-compiles from macOS and Linux:
 make build      # bin/tuck.exe
 make test       # portable tests
 make vet lint   # static checks for the Windows build
-make preview    # render the deck, header and icon to ./preview/*.png
+make preview    # render the deck, header, settings and icon to ./preview/*.png
 ```
 
 On Windows, plain `go build ./cmd/tuck` and `go test ./...` work too.
@@ -26,6 +26,8 @@ On Windows, plain `go build ./cmd/tuck` and `go test ./...` work too.
 | `internal/config` | The settings file | anywhere |
 | `internal/hotkey` | Parses shortcuts like `Ctrl+Alt+N` | anywhere |
 | `internal/deck` | Layout, hit testing and animation of the deck — pure geometry | anywhere |
+| `internal/settings` | Layout and hit testing of the settings window | anywhere |
+| `internal/markdown` | Finds the Markdown the editor styles, and task boxes to click | anywhere |
 | `internal/render` | Paints the deck, editor header and icon into images | anywhere |
 | `internal/win32` | Thin typed bindings for the Win32 APIs used | Windows |
 | `internal/app` | Windows, tray icon, hotkeys: wires input to the packages above | Windows |
