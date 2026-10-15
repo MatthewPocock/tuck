@@ -388,7 +388,9 @@ func (a *App) setFontSize(points int) {
 	}
 	a.cfg.FontSize = points
 	a.saveConfig()
-	a.editor.applyFont()
+	for _, e := range a.editors() {
+		e.applyFont()
+	}
 }
 
 // setNotesDir switches to another notes folder. The notes in the old folder
@@ -402,7 +404,7 @@ func (a *App) setNotesDir(dir string) {
 		win32.MessageBox(a.settingsHWND(), "Tuck cannot use that folder.\n\n"+err.Error(), appName, win32.MB_OK|win32.MB_ICONERROR)
 		return
 	}
-	a.editor.hide()
+	a.closeEditors()
 	notes, err := s.List()
 	if err != nil {
 		log.Printf("notes: %v", err)

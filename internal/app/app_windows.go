@@ -83,6 +83,11 @@ type App struct {
 	controller win32.HWND
 	deck       *deckWindow
 	editor     *editorWindow
+	// pinned are the notes pinned to the screen apart from the quick
+	// editor (see pinned_windows.go).
+	pinned []*editorWindow
+	// restoring is true while the pinned notes of the last run reopen.
+	restoring bool
 	// settings is created when first opened.
 	settings *settingsWindow
 	tray     tray
@@ -148,6 +153,7 @@ func Run(version string) error {
 	a.deck.show()
 	// A short peek on launch shows the user where the deck lives.
 	a.deck.peek()
+	a.restoreSession()
 
 	a.messageLoop()
 	return nil
@@ -255,10 +261,11 @@ func (a *App) preTranslate(msg *win32.MSG) bool {
 	if msg.Message != win32.WM_KEYDOWN {
 		return false
 	}
-	if msg.HWnd != a.editor.edit && msg.HWnd != a.editor.hwnd {
+	e := a.editorOf(msg.HWnd)
+	if e == nil {
 		return false
 	}
-	return a.editor.handleKey(msg.WParam)
+	return e.handleKey(msg.WParam)
 }
 
 // quit ends the message loop; shutdown then saves and cleans up.
@@ -267,7 +274,8 @@ func (a *App) quit() {
 }
 
 func (a *App) shutdown() {
-	a.editor.flush()
+	a.flushEditors()
+	a.saveSession()
 	a.tray.remove()
 	a.watch.close()
 	a.unregisterHotkeys()
@@ -344,7 +352,7 @@ func (a *App) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 		switch wp {
 		case busyTimer:
 			// Never cover a full-screen game, video or presentation.
-			a.deck.setSuppressed(win32.UserIsBusy() && !a.editor.shown)
+			a.deck.setSuppressed(win32.UserIsBusy() && !a.anyEditorShown())
 		case changesTimer:
 			if a.watch.active() {
 				win32.KillTimer(hwnd, changesTimer)
@@ -357,14 +365,17 @@ func (a *App) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uintptr {
 		// The user is signing out or shutting down: the process may be
 		// terminated as soon as this returns.
 		if wp != 0 {
-			a.editor.flush()
+			a.flushEditors()
+			a.saveSession()
 		}
 		return 0
 
 	case win32.WM_SETTINGCHANGE:
 		// The light/dark app mode may have changed.
 		if a.editor != nil {
-			a.editor.applyTheme()
+			for _, e := range a.editors() {
+				e.applyTheme()
+			}
 		}
 		a.refreshSettings()
 		return 0
@@ -429,7 +440,7 @@ func (a *App) syncDeck() {
 // updateHold keeps the deck expanded while a note is being edited next to it
 // or one of its menus is open.
 func (a *App) updateHold() {
-	editing := a.editor.shown && !a.editor.pinned
+	editing := slices.ContainsFunc(a.editors(), func(e *editorWindow) bool { return e.shown && !e.pinned })
 	a.deck.model.SetHeld(editing || a.menuHoldsDeck)
 	active := ""
 	if a.editor.shown && a.editor.note != nil {
@@ -491,6 +502,11 @@ func (a *App) openNote(id string) {
 	if n.Archived {
 		a.setArchived(id, false)
 	}
+	if e := a.editorFor(id); e != nil {
+		e.focus()
+		return
+	}
+	a.retireQuickEditor()
 	scale := a.deck.model.Scale()
 	a.editor.open(n, a.editorRect(id, scale), scale)
 	a.updateHold()
@@ -498,27 +514,34 @@ func (a *App) openNote(id string) {
 
 // toggleNote opens a note, or closes it if it is the one already open.
 func (a *App) toggleNote(id string) {
-	if a.editor.showing(id) {
-		a.editor.hide()
+	// A pinned note stays put; clicking its tab brings it to the front.
+	if e := a.editorFor(id); e != nil && !e.pinned {
+		e.hide()
 		return
 	}
 	a.openNote(id)
 }
 
-// stepNote switches the editor to the next (+1) or previous (-1) note.
-func (a *App) stepNote(delta int) {
+// stepNote switches an editor to the next (+1) or previous (-1) note. A note
+// that is already open elsewhere is brought to the front instead.
+func (a *App) stepNote(e *editorWindow, delta int) {
 	notes := a.active()
-	if a.editor.note == nil || len(notes) < 2 {
+	if e.note == nil || len(notes) < 2 {
 		return
 	}
-	i := slices.Index(notes, a.editor.note)
+	i := slices.Index(notes, e.note)
 	if i < 0 {
 		return
 	}
 	next := notes[(i+delta+len(notes))%len(notes)]
-	// Read the ID first: opening the next note may discard the current one
-	// if it is empty.
-	a.openNote(next.ID)
+	if other := a.editorFor(next.ID); other != nil {
+		other.focus()
+		return
+	}
+	scale := a.deck.model.Scale()
+	e.open(next, a.editorRect(next.ID, scale), scale)
+	a.updateHold()
+	a.saveSession()
 }
 
 // editorRect computes where the editor should appear for a note: beside the
@@ -547,7 +570,7 @@ func (a *App) pickUpChanges() {
 	// Pending edits are saved first. Should the open note have changed on
 	// disk too, the save keeps the other version as a separate note, which
 	// the scan below then picks up: neither side's words are lost.
-	a.editor.flush()
+	a.flushEditors()
 
 	changes, err := a.store.Changes()
 	if err != nil {
@@ -564,8 +587,8 @@ func (a *App) pickUpChanges() {
 			if current == nil {
 				continue
 			}
-			if a.editor.showing(c.ID) {
-				a.editor.hide()
+			if e := a.editorFor(c.ID); e != nil {
+				e.hide()
 			}
 			a.forget(current)
 		case current == nil:
@@ -573,11 +596,11 @@ func (a *App) pickUpChanges() {
 		default:
 			// Update in place: the editor and the deck hold this pointer.
 			*current = *c.Note
-			if a.editor.showing(c.ID) {
+			if e := a.editorFor(c.ID); e != nil {
 				if current.Archived {
-					a.editor.hide()
+					e.hide()
 				} else {
-					a.editor.reload()
+					e.reload()
 				}
 			}
 		}
@@ -615,8 +638,8 @@ func (a *App) deleteNote(id string) {
 	if n == nil {
 		return
 	}
-	if a.editor.showing(id) {
-		a.editor.hide()
+	if e := a.editorFor(id); e != nil {
+		e.hide()
 		// Closing the editor already discarded the note if it was empty.
 		if a.find(id) == nil {
 			return
@@ -654,8 +677,8 @@ func (a *App) setArchived(id string, archived bool) {
 	if n == nil || n.Archived == archived {
 		return
 	}
-	if archived && a.editor.showing(id) {
-		a.editor.hide()
+	if e := a.editorFor(id); archived && e != nil {
+		e.hide()
 		if a.find(id) == nil {
 			return
 		}
@@ -680,15 +703,15 @@ func (a *App) setColor(id string, c note.Color) {
 	if !n.Empty() {
 		a.saveNote(n)
 	}
-	if a.editor.showing(id) {
-		a.editor.applyTheme()
+	if e := a.editorFor(id); e != nil {
+		e.applyTheme()
 	}
 	a.syncDeck()
 }
 
-// cycleColor advances the open note to the next colour.
-func (a *App) cycleColor() {
-	if n := a.editor.note; n != nil {
+// cycleColor advances an editor's note to the next colour.
+func (a *App) cycleColor(e *editorWindow) {
+	if n := e.note; n != nil {
 		a.setColor(n.ID, n.Color.Next())
 	}
 }
@@ -699,14 +722,14 @@ func (a *App) toggleDeck() {
 		a.deck.peek()
 		return
 	}
-	a.editor.hide()
+	a.hideQuickEditor()
 	a.deck.hide()
 }
 
 func (a *App) setEdge(e config.Edge) {
 	a.cfg.Edge = e
 	a.saveConfig()
-	a.editor.hide()
+	a.hideQuickEditor()
 	a.deck.refresh()
 	a.deck.peek()
 	a.refreshSettings()
@@ -715,7 +738,7 @@ func (a *App) setEdge(e config.Edge) {
 func (a *App) setPosition(p float64) {
 	a.cfg.Position = p
 	a.saveConfig()
-	a.editor.hide()
+	a.hideQuickEditor()
 	a.deck.refresh()
 	a.deck.peek()
 	a.refreshSettings()
@@ -724,7 +747,9 @@ func (a *App) setPosition(p float64) {
 func (a *App) setTheme(t config.Theme) {
 	a.cfg.Theme = t
 	a.saveConfig()
-	a.editor.applyTheme()
+	for _, e := range a.editors() {
+		e.applyTheme()
+	}
 	a.refreshSettings()
 }
 
@@ -732,6 +757,8 @@ func (a *App) setTheme(t config.Theme) {
 func (a *App) popup(m *menu, at win32.POINT) {
 	a.menuOpen = true
 	a.menuHoldsDeck = a.deck.model.Open()
+	// Give the keyboard back to the note it came from afterwards.
+	from := a.editorOf(win32.GetForegroundWindow())
 	win32.SetDarkMenus(a.dark())
 	a.updateHold()
 	// A popup menu only closes on an outside click if its owner is the
@@ -740,8 +767,10 @@ func (a *App) popup(m *menu, at win32.POINT) {
 	m.show(a.controller, at)
 	a.menuOpen, a.menuHoldsDeck = false, false
 
-	if a.editor.shown {
-		win32.SetForegroundWindow(a.editor.hwnd)
+	if from != nil && from.shown {
+		from.focus()
+	} else if a.editor.shown {
+		a.editor.focus()
 	}
 	a.updateHold()
 }

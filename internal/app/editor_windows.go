@@ -186,6 +186,29 @@ func (e *editorWindow) hide() {
 	if n != nil {
 		e.app.noteClosed(n)
 	}
+	e.app.editorClosed(e)
+}
+
+// restore shows a note pinned at a rectangle, as it was when Tuck last
+// ran, without taking focus from whatever the user is doing.
+func (e *editorWindow) restore(n *note.Note, at win32.RECT, scale float64) {
+	e.note = n
+	e.pinned = true
+	e.setScale(scale)
+	e.applyTheme()
+	e.setText(n.Body)
+	// Showing the window through SetWindowPos, not ShowWindow, keeps a newly
+	// started process from handing it the keyboard.
+	win32.SetWindowPos(e.hwnd, win32.HWND_TOPMOST, at.Left, at.Top, at.Width(), at.Height(),
+		win32.SWP_NOACTIVATE|win32.SWP_SHOWWINDOW)
+	e.layout()
+	e.shown = true
+}
+
+// focus brings the editor to the front and puts the keyboard in it.
+func (e *editorWindow) focus() {
+	win32.SetForegroundWindow(e.hwnd)
+	win32.SetFocus(e.edit)
 }
 
 // reload shows the open note's text again after it changed on disk, keeping
@@ -412,7 +435,7 @@ func (e *editorWindow) hitTest(screen win32.POINT) uintptr {
 func (e *editorWindow) click(b render.HeaderButton) {
 	switch b {
 	case render.ButtonColor:
-		e.app.cycleColor()
+		e.app.cycleColor(e)
 	case render.ButtonNew:
 		e.app.newNote()
 	case render.ButtonMenu:
@@ -436,6 +459,7 @@ func (e *editorWindow) setPinned(pinned bool) {
 	e.pinned = pinned
 	e.invalidateHeader()
 	e.app.updateHold()
+	e.app.saveSession()
 }
 
 // handleKey processes editor-wide keyboard shortcuts before the text control
@@ -473,11 +497,11 @@ func (e *editorWindow) handleKey(vk uintptr) bool {
 	case 'I':
 		e.wrapSelection("_")
 	case win32.VK_OEM_PERIOD:
-		e.app.cycleColor()
+		e.app.cycleColor(e)
 	case win32.VK_NEXT:
-		e.app.stepNote(+1)
+		e.app.stepNote(e, +1)
 	case win32.VK_PRIOR:
-		e.app.stepNote(-1)
+		e.app.stepNote(e, -1)
 	case win32.VK_BACK:
 		if !shift {
 			return false
@@ -655,6 +679,13 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 
 	case win32.WM_EXITSIZEMOVE:
 		e.endMove()
+		if e.pinned {
+			e.app.saveSession()
+		}
+		return 0
+
+	case msgDiscard:
+		win32.DestroyWindow(hwnd)
 		return 0
 
 	case win32.WM_DPICHANGED:
@@ -665,8 +696,19 @@ func (e *editorWindow) wndProc(hwnd win32.HWND, msg uint32, wp, lp uintptr) uint
 			win32.SWP_NOZORDER|win32.SWP_NOACTIVATE)
 		return 0
 
+	case win32.WM_SYSCOMMAND:
+		if wp&0xFFF0 == win32.SC_CLOSE {
+			// Alt+F4: the user closes this note.
+			e.hide()
+			return 0
+		}
+
 	case win32.WM_CLOSE:
-		e.hide()
+		// Sent directly, without SC_CLOSE, this is a request to close the
+		// app (taskkill, an installer, Restart Manager), which arrives at
+		// every window. Quit, so the pinned notes are remembered as they are
+		// instead of being closed one by one first.
+		e.app.quit()
 		return 0
 
 	case win32.WM_DESTROY:

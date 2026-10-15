@@ -42,6 +42,8 @@ var (
 	procMessageBoxW                   = user32.NewProc("MessageBoxW")
 	procMonitorFromPoint              = user32.NewProc("MonitorFromPoint")
 	procMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
+	procMonitorFromRect               = user32.NewProc("MonitorFromRect")
+	procGetForegroundWindow           = user32.NewProc("GetForegroundWindow")
 	procMoveWindow                    = user32.NewProc("MoveWindow")
 	procCallWindowProcW               = user32.NewProc("CallWindowProcW")
 	procSetWindowLongPtrW             = user32.NewProc("SetWindowLongPtrW")
@@ -345,6 +347,17 @@ func MonitorFromPoint(pt POINT, flags uint32) HMONITOR {
 	packed := uintptr(uint32(pt.X)) | uintptr(uint32(pt.Y))<<32
 	r, _, _ := procMonitorFromPoint.Call(packed, uintptr(flags))
 	return HMONITOR(r)
+}
+
+// MonitorFromRect returns the monitor a rectangle mostly lies on.
+func MonitorFromRect(r RECT, flags uint32) HMONITOR {
+	h, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(&r)), uintptr(flags))
+	return HMONITOR(h)
+}
+
+func GetForegroundWindow() HWND {
+	h, _, _ := procGetForegroundWindow.Call()
+	return HWND(h)
 }
 
 func MonitorFromWindow(hwnd HWND, flags uint32) HMONITOR {
