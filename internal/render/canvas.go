@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"sync"
 
 	"golang.org/x/image/vector"
 
@@ -70,12 +71,57 @@ func (c *Canvas) StrokeRoundRect(r deck.Rect, radius, width float64, col color.N
 		return
 	}
 	inner := r.Inflate(-width, -width)
-	c.path(r, col, func(ox, oy float32) {
-		roundRect(&c.ras, r, radius, ox, oy, false)
-		if !inner.Empty() {
+	if inner.Empty() {
+		c.FillRoundRect(r, radius, col)
+		return
+	}
+	radius = math.Max(0, math.Min(radius, math.Min(r.W, r.H)/2))
+	if radius < width || r.W*r.H < 64*64 {
+		c.path(r, col, func(ox, oy float32) {
+			roundRect(&c.ras, r, radius, ox, oy, false)
 			// Winding the inner path the other way punches it out.
 			roundRect(&c.ras, inner, max(radius-width, 0), ox, oy, true)
+		})
+		return
+	}
+	// Rasterising costs as much as the area around the shape, so a large
+	// outline is drawn as four thin edges and four small corners rather
+	// than as one ring.
+	x0, y0, x1, y1 := r.X, r.Y, r.X+r.W, r.Y+r.H
+	c.FillRect(deck.Rect{X: x0 + radius, Y: y0, W: r.W - 2*radius, H: width}, col)
+	c.FillRect(deck.Rect{X: x0 + radius, Y: y1 - width, W: r.W - 2*radius, H: width}, col)
+	c.FillRect(deck.Rect{X: x0, Y: y0 + radius, W: width, H: r.H - 2*radius}, col)
+	c.FillRect(deck.Rect{X: x1 - width, Y: y0 + radius, W: width, H: r.H - 2*radius}, col)
+	for _, k := range [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
+		cx, cy := x0+radius, y0+radius
+		if k[0] > 0 {
+			cx = x1 - radius
 		}
+		if k[1] > 0 {
+			cy = y1 - radius
+		}
+		c.strokeCorner(cx, cy, k[0], k[1], radius, radius-width, col)
+	}
+}
+
+// strokeCorner fills a quarter of a ring centred on (cx, cy) between radii
+// inner and outer, in the quadrant that (dx, dy) points to.
+func (c *Canvas) strokeCorner(cx, cy, dx, dy, outer, inner float64, col color.NRGBA) {
+	box := deck.Rect{X: math.Min(cx, cx+dx*outer), Y: math.Min(cy, cy+dy*outer), W: outer, H: outer}
+	c.path(box, col, func(ox, oy float32) {
+		pt := func(x, y float64) (float32, float32) { return float32(x) - ox, float32(y) - oy }
+		z := &c.ras
+		z.MoveTo(pt(cx+dx*outer, cy))
+		a1, a2 := pt(cx+dx*outer, cy+dy*outer*kappa)
+		b1, b2 := pt(cx+dx*outer*kappa, cy+dy*outer)
+		e1, e2 := pt(cx, cy+dy*outer)
+		z.CubeTo(a1, a2, b1, b2, e1, e2)
+		z.LineTo(pt(cx, cy+dy*inner))
+		a1, a2 = pt(cx+dx*inner*kappa, cy+dy*inner)
+		b1, b2 = pt(cx+dx*inner, cy+dy*inner*kappa)
+		e1, e2 = pt(cx+dx*inner, cy)
+		z.CubeTo(a1, a2, b1, b2, e1, e2)
+		z.ClosePath()
 	})
 }
 
@@ -140,12 +186,120 @@ func (c *Canvas) Line(x1, y1, x2, y2, width float64, col color.NRGBA) {
 // Shadow blends a soft drop shadow for a rounded rectangle onto the canvas.
 // blur is how far the shadow spreads, dy how far it is offset downward and
 // opacity its darkness directly beneath the shape.
+//
+// Shadows are drawn on every frame of an animation, so rather than
+// rasterising the whole shape each time, the shadow of a small rectangle with
+// the same corners is drawn once and stretched to size: its corners are
+// copied, its edges repeated and its middle filled.
 func (c *Canvas) Shadow(r deck.Rect, radius, blur, dy, opacity float64) {
 	if opacity <= 0 || blur <= 0 {
 		return
 	}
-	// A true Gaussian blur is overkill for shapes this small: stacking a few
-	// progressively larger, faint copies gives a convincing falloff.
+	sl := shadowSlice(radius, blur, opacity)
+	n := sl.corner
+	x0 := int(math.Round(r.X - blur))
+	y0 := int(math.Round(r.Y + dy - blur))
+	w := int(math.Round(r.W + 2*blur))
+	h := int(math.Round(r.H + 2*blur))
+	if w < 2*n+1 || h < 2*n+1 {
+		c.layeredShadow(r, radius, blur, dy, opacity)
+		return
+	}
+	// Map each target pixel to a pixel of the slice: corners one to one,
+	// edges and middle from the slice's centre row or column.
+	sx := func(x int) int {
+		switch {
+		case x < n:
+			return x
+		case x >= w-n:
+			return sl.size - (w - x)
+		}
+		return n
+	}
+	bounds := c.Img.Bounds()
+	for y := max(0, -y0); y < h; y++ {
+		ty := y0 + y
+		if ty >= bounds.Max.Y {
+			break
+		}
+		syy := sx2(y, h, n, sl.size)
+		row := sl.alpha[syy*sl.size : (syy+1)*sl.size]
+		for x := max(0, -x0); x < w; x++ {
+			tx := x0 + x
+			if tx >= bounds.Max.X {
+				break
+			}
+			if a := row[sx(x)]; a != 0 {
+				darken(c.Img, tx, ty, a)
+			}
+		}
+	}
+}
+
+// sx2 maps a row of a stretched shadow to a row of its slice.
+func sx2(y, h, n, size int) int {
+	switch {
+	case y < n:
+		return y
+	case y >= h-n:
+		return size - (h - y)
+	}
+	return n
+}
+
+// darken blends black at coverage a onto a premultiplied pixel.
+func darken(img *image.RGBA, x, y int, a uint8) {
+	i := img.PixOffset(x, y)
+	p := img.Pix[i : i+4 : i+4]
+	k := 255 - uint32(a)
+	p[0] = uint8((uint32(p[0])*k + 127) / 255)
+	p[1] = uint8((uint32(p[1])*k + 127) / 255)
+	p[2] = uint8((uint32(p[2])*k + 127) / 255)
+	p[3] = uint8(uint32(a) + (uint32(p[3])*k+127)/255)
+}
+
+// slice is the shadow of a square just big enough to have straight edges,
+// as alpha values.
+type slice struct {
+	size, corner int
+	alpha        []uint8
+}
+
+type sliceKey struct{ radius, blur, opacity float32 }
+
+var shadowSlices struct {
+	sync.Mutex
+	m map[sliceKey]*slice
+}
+
+func shadowSlice(radius, blur, opacity float64) *slice {
+	key := sliceKey{float32(radius), float32(blur), float32(opacity)}
+	shadowSlices.Lock()
+	defer shadowSlices.Unlock()
+	if sl, ok := shadowSlices.m[key]; ok {
+		return sl
+	}
+	// The corner covers the blur outside the shape and its rounding inside
+	// it; the pixel after it lies on a straight edge.
+	corner := int(math.Ceil(blur + radius + 1))
+	size := 2*corner + 1
+	tmp := NewCanvas(size, size)
+	inner := float64(size) - 2*blur
+	tmp.layeredShadow(deck.Rect{X: blur, Y: blur, W: inner, H: inner}, radius, blur, 0, opacity)
+	sl := &slice{size: size, corner: corner, alpha: make([]uint8, size*size)}
+	for i := range sl.alpha {
+		sl.alpha[i] = tmp.Img.Pix[4*i+3]
+	}
+	if shadowSlices.m == nil || len(shadowSlices.m) > 256 {
+		shadowSlices.m = map[sliceKey]*slice{}
+	}
+	shadowSlices.m[key] = sl
+	return sl
+}
+
+// layeredShadow draws a shadow the direct way: a stack of progressively
+// larger, fainter copies of the shape, which gives a convincing falloff.
+func (c *Canvas) layeredShadow(r deck.Rect, radius, blur, dy, opacity float64) {
 	// Each layer adds a step of about two pixels, so wide shadows need
 	// more of them to stay smooth.
 	layers := max(5, int(blur/2))

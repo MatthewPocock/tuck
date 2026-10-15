@@ -182,14 +182,16 @@ func (d *DIB) Detach() HBITMAP {
 func (d *DIB) CopyFrom(img *image.RGBA) {
 	b := img.Bounds()
 	w, h := min(b.Dx(), d.Width), min(b.Dy(), d.Height)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	// This runs on every frame of an animation, so swap the red and blue
+	// bytes of whole pixels at a time rather than byte by byte.
 	for y := 0; y < h; y++ {
-		src := img.Pix[y*img.Stride : y*img.Stride+w*4]
-		dst := d.Pix[y*d.Width*4 : y*d.Width*4+w*4]
-		for i := 0; i+3 < len(src); i += 4 {
-			dst[i+0] = src[i+2]
-			dst[i+1] = src[i+1]
-			dst[i+2] = src[i+0]
-			dst[i+3] = src[i+3]
+		src := unsafe.Slice((*uint32)(unsafe.Pointer(&img.Pix[y*img.Stride])), w)
+		dst := unsafe.Slice((*uint32)(unsafe.Pointer(&d.Pix[y*d.Width*4])), w)
+		for i, v := range src {
+			dst[i] = v&0xFF00FF00 | v&0xFF<<16 | v>>16&0xFF
 		}
 	}
 }
